@@ -11,7 +11,8 @@ import java.math.BigDecimal;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonIgnore;
-
+import jakarta.persistence.JoinColumn;
+// import jakarta.persistence.JsonBackReference;
 
 
 
@@ -40,10 +41,19 @@ public class Item {
     // @JoinColumn(name = "owner_id", nullable = false)
     // private Owner owner;
 
+    // @ManyToOne
+    // @JoinColumn(name = "owner_id", nullable = false)
+    // @JsonBackReference
+    // private Owner owner;
+
+
+
+
     @ManyToOne
-    @JoinColumn(name = "owner_id", nullable = false)
-    @JsonBackReference
-    private Owner owner;
+@JoinColumn(name = "owner_id", nullable = false)
+@JsonBackReference(value = "rental-item")
+private Owner owner;
+
     
     @Column(nullable = false)
     private boolean available;

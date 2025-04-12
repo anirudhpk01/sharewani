@@ -1,20 +1,19 @@
+// 
+
+
 package com.sharewani.rentalportal.service;
+import java.math.BigDecimal;
+
 
 import com.sharewani.rentalportal.dto.RentalDto;
-import com.sharewani.rentalportal.model.Item;
-import com.sharewani.rentalportal.model.Rental;
-import com.sharewani.rentalportal.model.Tenant;
 import com.sharewani.rentalportal.model.enums.RentalStatus;
-import com.sharewani.rentalportal.repository.ItemRepository;
-import com.sharewani.rentalportal.repository.RentalRepository;
-import com.sharewani.rentalportal.repository.TenantRepository;
-import com.sharewani.rentalportal.service.factory.RentalFactory;
+import com.sharewani.rentalportal.model.*;
+import com.sharewani.rentalportal.repository.*;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -23,91 +22,84 @@ public class RentalService {
     private final RentalRepository rentalRepository;
     private final ItemRepository itemRepository;
     private final TenantRepository tenantRepository;
-    private final RentalFactory rentalFactory;
-    private final NotificationService notificationService;
-
-    public List<Rental> getAllRentals() {
-        return rentalRepository.findAll();
-    }
-
-    public Optional<Rental> getRentalById(Long id) {
-        return rentalRepository.findById(id);
-    }
-
-    public List<Rental> getRentalsByTenant(Tenant tenant) {
-        return rentalRepository.findByTenant(tenant);
-    }
-
-    public List<Rental> getRentalsByItem(Item item) {
-        return rentalRepository.findByItem(item);
-    }
 
     @Transactional
-    public Rental createRental(RentalDto rentalDto) {
-        Item item = itemRepository.findById(rentalDto.getItemId())
-                .orElseThrow(() -> new IllegalArgumentException("Item not found"));
+    
 
-        // Check if item is available using State pattern
-        if (!item.handleRentalRequest()) {
-            throw new IllegalStateException("Item is not available for rental");
-        }
+    
+public Rental requestRental(RentalDto dto) {
+    Item item = itemRepository.findById(dto.getItemId())
+            .orElseThrow(() -> new IllegalArgumentException("Item not found"));
+    Tenant tenant = tenantRepository.findById(dto.getTenantId())
+            .orElseThrow(() -> new IllegalArgumentException("Tenant not found"));
 
-        // Use the factory to create a rental
-        Rental rental = rentalFactory.createRental(rentalDto);
-        rental = rentalRepository.save(rental);
-
-        // Notify the owner about the rental request
-        notificationService.notifyRentalRequest(rental);
-
-        return rental;
+    if (!item.isAvailable()) {
+        throw new IllegalStateException("Item not available");
     }
 
-    @Transactional
-    public Rental approveRental(Long id) {
-        Rental rental = rentalRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Rental not found"));
+    // Calculate total cost
+    long diffMillis = dto.getEndDate().getTime() - dto.getStartDate().getTime();
+    long rentalDays = (diffMillis / (1000 * 60 * 60 * 24));
+    if (rentalDays == 0) rentalDays = 1;
 
+    BigDecimal totalCost = item.getDailyRate().multiply(BigDecimal.valueOf(rentalDays));
+
+    Rental rental = Rental.builder()
+            .item(item)
+            .tenant(tenant)
+            .startDate(dto.getStartDate())
+            .endDate(dto.getEndDate())
+            .status(RentalStatus.PENDING)
+            .amount(totalCost)
+            .build();
+
+    return rentalRepository.save(rental);
+}
+
+
+    public Rental approveRental(Long rentalId) {
+        Rental rental = getRentalOrThrow(rentalId);
         rental.setStatus(RentalStatus.APPROVED);
-        
-        // Mark the item as unavailable
-        Item item = rental.getItem();
-        item.setAvailable(false);
-        itemRepository.save(item);
-        
-        rental = rentalRepository.save(rental);
-        
-        // Notify the tenant about the approval
-        notificationService.notifyRentalStatusChange(rental);
-        
-        return rental;
-    }
-
-    @Transactional
-    public Rental rejectRental(Long id) {
-        Rental rental = rentalRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Rental not found"));
-
-        rental.setStatus(RentalStatus.REJECTED);
-        rental = rentalRepository.save(rental);
-        
-        // Notify the tenant about the rejection
-        notificationService.notifyRentalStatusChange(rental);
-        
-        return rental;
-    }
-
-    @Transactional
-    public Rental completeRental(Long id) {
-        Rental rental = rentalRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Rental not found"));
-
-        rental.setStatus(RentalStatus.COMPLETED);
-        
-        // Mark the item as available again
-        Item item = rental.getItem();
-        item.setAvailable(true);
-        itemRepository.save(item);
-        
+        rental.getItem().setAvailable(false);
         return rentalRepository.save(rental);
+    }
+
+    public Rental rejectRental(Long rentalId) {
+        Rental rental = getRentalOrThrow(rentalId);
+        rental.setStatus(RentalStatus.REJECTED);
+        return rentalRepository.save(rental);
+    }
+
+    public Rental completeRental(Long rentalId) {
+        Rental rental = getRentalOrThrow(rentalId);
+        rental.setStatus(RentalStatus.COMPLETED);
+        rental.getItem().setAvailable(true);
+        return rentalRepository.save(rental);
+    }
+
+    // public List<Rental> getRentalsByItem(Long itemId) {
+    //     return rentalRepository.findByItemId(itemId);
+    // }
+
+    // public List<Rental> getRentalsByTenant(Long tenantId) {
+    //     return rentalRepository.findByTenantId(tenantId);
+    // }
+
+    public List<Rental> getRentalsByItem(Long itemId) {
+    Item item = itemRepository.findById(itemId)
+            .orElseThrow(() -> new IllegalArgumentException("Item not found"));
+    return rentalRepository.findByItem(item);
+}
+
+public List<Rental> getRentalsByTenant(Long tenantId) {
+    Tenant tenant = tenantRepository.findById(tenantId)
+            .orElseThrow(() -> new IllegalArgumentException("Tenant not found"));
+    return rentalRepository.findByTenant(tenant);
+}
+
+
+    private Rental getRentalOrThrow(Long rentalId) {
+        return rentalRepository.findById(rentalId)
+                .orElseThrow(() -> new IllegalArgumentException("Rental not found"));
     }
 }
