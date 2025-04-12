@@ -8,6 +8,13 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 
+
+import com.fasterxml.jackson.annotation.JsonBackReference;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
+
+
+
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -29,8 +36,13 @@ public class Item {
     @Column(nullable = false)
     private BigDecimal dailyRate;
     
+    // @ManyToOne
+    // @JoinColumn(name = "owner_id", nullable = false)
+    // private Owner owner;
+
     @ManyToOne
     @JoinColumn(name = "owner_id", nullable = false)
+    @JsonBackReference
     private Owner owner;
     
     @Column(nullable = false)
@@ -40,7 +52,15 @@ public class Item {
     private String imageUrl;
     
     @Transient
+    @JsonIgnore
     private ItemAvailabilityState state;
+
+    public String getCurrentState() {
+    if (state == null) {
+        state = available ? new AvailableState() : new UnavailableState();
+    }
+    return state.getClass().getSimpleName().replace("State", "");
+}
     
     public void setState(ItemAvailabilityState state) {
         this.state = state;
