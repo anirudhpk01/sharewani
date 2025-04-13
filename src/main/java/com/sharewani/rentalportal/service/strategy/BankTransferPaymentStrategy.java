@@ -9,30 +9,46 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.Date;
+import java.math.BigDecimal;
+import java.time.LocalDate;
 
-@Component
-@RequiredArgsConstructor
-public class BankTransferPaymentStrategy implements PaymentStrategy {
+// @Component
+// @RequiredArgsConstructor
+// public class BankTransferPaymentStrategy implements PaymentStrategy {
 
-    private final RentalRepository rentalRepository;
+//     private final RentalRepository rentalRepository;
 
-    @Override
-    public Payment processPayment(PaymentDto paymentDto) {
-        // In a real app, we would verify bank transfer details here
-        Rental rental = rentalRepository.findById(paymentDto.getRentalId())
-                .orElseThrow(() -> new IllegalArgumentException("Rental not found"));
+//     @Override
+//     public Payment processPayment(PaymentDto paymentDto) {
+//         // In a real app, we would verify bank transfer details here
+//         Rental rental = rentalRepository.findById(paymentDto.getRentalId())
+//                 .orElseThrow(() -> new IllegalArgumentException("Rental not found"));
         
-        // Bank transfers typically take time to process
-        return Payment.builder()
-                .amount(paymentDto.getAmount())
-                .date(new Date())
-                .status(PaymentStatus.PENDING) // Bank transfers start as pending
-                .rental(rental)
-                .build();
-    }
+//         // Bank transfers typically take time to process
+//         return Payment.builder()
+//                 .amount(paymentDto.getAmount())
+//                 .date(new Date())
+//                 .status(PaymentStatus.PENDING) // Bank transfers start as pending
+//                 .rental(rental)
+//                 .build();
+//     }
 
+//     @Override
+//     public String getType() {
+//         return "BANK_TRANSFER";
+//     }
+// }
+
+
+@Component("BANK")
+public class BankTransferPaymentStrategy implements PaymentStrategy {
     @Override
-    public String getType() {
-        return "BANK_TRANSFER";
+    public Payment pay(Rental rental, BigDecimal amount) {
+        return Payment.builder()
+                .rental(rental)
+                .amount(amount)
+                .method("BANK")
+                .paymentDate(LocalDate.now())
+                .build();
     }
 }

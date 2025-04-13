@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>Add Item - Sharewani</title>
+</head>
+<body>
+    <h2>Add New Item</h2>
+
+    <form action="/sharewani/items" method="post" enctype="multipart/form-data">
+        <label>Item Name:</label><br>
+        <input type="text" name="name" required><br>
+
+        <label>Description:</label><br>
+        <textarea name="description" required></textarea><br>
+
+        <label>Daily Rate (₹):</label><br>
+        <input type="number" name="dailyRate" step="0.01" required><br>
+
+        <label>Owner ID:</label><br>
+        <input type="number" name="ownerId" required><br>
+
+        <label>Image (optional):</label><br>
+        <input type="file" name="image"><br><br>
+
+        <button type="submit">Add Item</button>
+    </form>
+
+    <br><a href="/sharewani/login">Back to login</a>
+</body>
+</html>

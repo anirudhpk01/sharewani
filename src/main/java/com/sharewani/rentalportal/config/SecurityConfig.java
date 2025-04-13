@@ -12,17 +12,14 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        // For development, we'll disable CSRF
         http
             .csrf(csrf -> csrf.disable())
             .authorizeHttpRequests(auth -> auth
+                .requestMatchers("/sharewani/**").permitAll()  // ✅ allow all frontend views!
                 .requestMatchers("/css/**", "/js/**", "/images/**").permitAll()
-                .requestMatchers("/").permitAll()
-                .requestMatchers("/register").permitAll()
-                .requestMatchers("/login").permitAll()
-                .anyRequest().permitAll() // For now, permitting all requests
+                .anyRequest().permitAll()
             );
-        
+
         return http.build();
     }
 }
