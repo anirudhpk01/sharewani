@@ -1,4 +1,4 @@
-<!-- <!DOCTYPE html>
+<!-- <!-- <!DOCTYPE html>
 <html>
 <head>
   <title>Rental Requests</title>
@@ -42,6 +42,9 @@
   <a href="/sharewani/pages/owner-homepage">🔙 Back to Owner Home</a>
 </body>
 </html> -->
+
+
+<!-- 
 <!DOCTYPE html>
 <html>
 <head>
@@ -106,5 +109,188 @@
 <body>
   <h2>Rental Requests for Your Items</h2>
   <div id="rentalRequests">Loading...</div>
+</body>
+</html> --> -->
+
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rental Requests - Sharewani</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f9fafb;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      color: #1f2937;
+    }
+
+    .navbar {
+      background-color: #1e3a8a;
+      color: white;
+      padding: 1rem;
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: bold;
+    }
+
+    .container {
+      flex: 1;
+      max-width: 800px;
+      margin: auto;
+      padding: 40px 20px;
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 30px;
+      color: #1e293b;
+    }
+
+    .card {
+      background-color: white;
+      padding: 20px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    }
+
+    .card h4 {
+      margin: 0 0 10px;
+      color: #1e40af;
+    }
+
+    .card p {
+      margin: 4px 0;
+      color: #334155;
+    }
+
+    .card button {
+      margin-top: 10px;
+      margin-right: 10px;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    .approve-btn {
+      background-color: #10b981;
+      color: white;
+    }
+
+    .reject-btn {
+      background-color: #ef4444;
+      color: white;
+    }
+
+    .back-link {
+      text-align: center;
+      margin-top: 30px;
+    }
+
+    .back-link a {
+      color: #1e40af;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .footer {
+      background-color: #1e3a8a;
+      color: white;
+      text-align: center;
+      padding: 1rem;
+      font-size: 0.9rem;
+    }
+  </style>
+  <script>
+    async function fetchRequests() {
+      const ownerId = localStorage.getItem("ownerId");
+
+      if (!ownerId) {
+        alert("⚠️ Owner not logged in!");
+        return;
+      }
+
+      const response = await fetch(`/sharewani/items/owner/${ownerId}`);
+      const items = await response.json();
+
+      const rentalContainer = document.getElementById("rentalRequests");
+      rentalContainer.innerHTML = "";
+
+      for (const item of items) {
+        const rentalsRes = await fetch(`/sharewani/rentals/item/${item.id}`);
+        const rentals = await rentalsRes.json();
+
+        rentals.forEach(rental => {
+          const card = document.createElement("div");
+          card.className = "card";
+          card.innerHTML = `
+            <h4>📦 Item: ${item.name}</h4>
+            <p><strong>Rental ID:</strong> ${rental.id}</p>
+            <p><strong>Tenant:</strong> ${rental.tenant.name}</p>
+            <p><strong>Status:</strong> ${rental.status}</p>
+            <p><strong>From:</strong> ${rental.startDate}</p>
+            <p><strong>To:</strong> ${rental.endDate}</p>
+            <p><strong>Amount:</strong> ₹${rental.amount}</p>
+            ${rental.status === "PENDING" ? `
+              <button class="approve-btn" onclick="approveRental(${rental.id})">✅ Approve</button>
+              <button class="reject-btn" onclick="rejectRental(${rental.id})">❌ Reject</button>
+            ` : ''}
+          `;
+          rentalContainer.appendChild(card);
+        });
+      }
+    }
+
+    async function approveRental(rentalId) {
+      const response = await fetch(`/sharewani/rentals/${rentalId}/approve`, { method: "PUT" });
+      if (response.ok) {
+        alert("✅ Rental approved!");
+        fetchRequests();
+      } else {
+        alert("❌ Failed to approve rental");
+      }
+    }
+
+    async function rejectRental(rentalId) {
+      const response = await fetch(`/sharewani/rentals/${rentalId}/reject`, { method: "PUT" });
+      if (response.ok) {
+        alert("❌ Rental rejected!");
+        fetchRequests();
+      } else {
+        alert("❌ Failed to reject rental");
+      }
+    }
+
+    window.onload = fetchRequests;
+  </script>
+</head>
+<body>
+
+  <div class="navbar">Sharewani</div>
+
+  <div class="container">
+    <h2>📋 Rental Requests for Your Items</h2>
+    <div id="rentalRequests">Loading...</div>
+
+    <div class="back-link">
+      <a href="/sharewani/pages/owner-homepage">🔙 Back to Owner Home</a>
+    </div>
+  </div>
+
+  <div class="footer">Sharewani</div>
+
 </body>
 </html>

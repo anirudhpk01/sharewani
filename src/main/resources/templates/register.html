@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
   <title>Register</title>
@@ -48,5 +48,349 @@
     </label><br><br>
     <button type="submit">Register</button>
   </form>
+</body>
+</html> -->
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register | ShareWani</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+  <script>
+    async function registerUser(event) {
+      event.preventDefault();
+      const formData = {
+        name: document.getElementById("name").value,
+        email: document.getElementById("email").value,
+        password: document.getElementById("password").value,
+        phone: document.getElementById("phone").value,
+        userType: document.getElementById("userType").value
+      };
+
+      try {
+        const response = await fetch("/sharewani/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formData)
+        });
+
+        if (response.ok) {
+          alert("✅ Registration successful! Redirecting to login...");
+          window.location.href = "/sharewani/pages/login";
+        } else {
+          const error = await response.text();
+          alert("❌ Registration failed: " + error);
+        }
+      } catch (err) {
+        alert("❌ Error: " + err.message);
+      }
+    }
+    
+    function togglePassword() {
+      const passwordInput = document.getElementById("password");
+      const eyeIcon = document.getElementById("togglePasswordIcon");
+      
+      if (passwordInput.type === "password") {
+        passwordInput.type = "text";
+        eyeIcon.className = "fas fa-eye-slash";
+      } else {
+        passwordInput.type = "password";
+        eyeIcon.className = "fas fa-eye";
+      }
+    }
+  </script>
+  <style>
+    :root {
+      --primary-color: #4361ee;
+      --secondary-color: #3f37c9;
+      --accent-color: #4cc9f0;
+      --background-color: #f8f9fa;
+      --text-color: #212529;
+      --light-text: #6c757d;
+      --error-color: #e63946;
+      --success-color: #2a9d8f;
+      --border-radius: 8px;
+      --box-shadow: 0 4px 20px rgba(67, 97, 238, 0.15);
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    body {
+      background: var(--background-color);
+      color: var(--text-color);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(67, 97, 238, 0.05) 0%, transparent 20%),
+        radial-gradient(circle at 90% 80%, rgba(76, 201, 240, 0.07) 0%, transparent 20%);
+      background-attachment: fixed;
+    }
+    
+    .container {
+      width: 100%;
+      max-width: 480px;
+      background: white;
+      padding: 40px;
+      border-radius: var(--border-radius);
+      box-shadow: var(--box-shadow);
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .container::before {
+      content: '';
+      position: absolute;
+      top: -40px;
+      right: -40px;
+      width: 100px;
+      height: 100px;
+      background: var(--accent-color);
+      border-radius: 50%;
+      opacity: 0.3;
+      z-index: 0;
+    }
+    
+    .container::after {
+      content: '';
+      position: absolute;
+      bottom: -60px;
+      left: -60px;
+      width: 150px;
+      height: 150px;
+      background: var(--primary-color);
+      border-radius: 50%;
+      opacity: 0.1;
+      z-index: 0;
+    }
+    
+    .logo {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--primary-color);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+    }
+    
+    .logo i {
+      margin-right: 10px;
+      font-size: 1.6rem;
+    }
+    
+    h2 {
+      font-size: 1.8rem;
+      color: var(--text-color);
+      margin-bottom: 30px;
+      position: relative;
+      z-index: 1;
+    }
+    
+    h2::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      bottom: -10px;
+      width: 60px;
+      height: 3px;
+      background: var(--primary-color);
+      border-radius: 10px;
+    }
+    
+    .input-group {
+      margin-bottom: 20px;
+      position: relative;
+      z-index: 1;
+    }
+    
+    .input-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 500;
+      color: var(--text-color);
+    }
+    
+    .input-field {
+      position: relative;
+    }
+    
+    .input-field i.field-icon {
+      position: absolute;
+      left: 15px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--light-text);
+    }
+    
+    .input-field input, 
+    .input-field select {
+      width: 100%;
+      padding: 14px 15px 14px 45px;
+      border: 1px solid #dee2e6;
+      border-radius: var(--border-radius);
+      font-size: 1rem;
+      transition: all 0.3s ease;
+    }
+    
+    .input-field input:focus, 
+    .input-field select:focus {
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.15);
+      outline: none;
+    }
+    
+    .password-toggle {
+      position: absolute;
+      right: 15px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--light-text);
+      cursor: pointer;
+      font-size: 1rem;
+    }
+    
+    .password-toggle:focus {
+      outline: none;
+    }
+    
+    button[type="submit"] {
+      width: 100%;
+      padding: 14px;
+      background: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: var(--border-radius);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+      z-index: 1;
+    }
+    
+    button[type="submit"]:hover {
+      background: var(--secondary-color);
+      transform: translateY(-2px);
+    }
+    
+    button[type="submit"]:active {
+      transform: translateY(0);
+    }
+    
+    .login-link {
+      text-align: center;
+      margin-top: 20px;
+      color: var(--light-text);
+      position: relative;
+      z-index: 1;
+    }
+    
+    .login-link a {
+      color: var(--primary-color);
+      text-decoration: none;
+      font-weight: 600;
+      transition: color 0.3s;
+    }
+    
+    .login-link a:hover {
+      color: var(--secondary-color);
+      text-decoration: underline;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .container {
+      animation: fadeIn 0.6s ease-out;
+    }
+    
+    /* Responsive styles */
+    @media (max-width: 576px) {
+      .container {
+        padding: 30px 20px;
+      }
+      
+      h2 {
+        font-size: 1.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <i class="fas fa-home"></i>
+      <span>ShareWani</span>
+    </div>
+    <h2>Create Account</h2>
+    <form onsubmit="registerUser(event)">
+      <div class="input-group">
+        <label for="name">Full Name</label>
+        <div class="input-field">
+          <i class="fas fa-user field-icon"></i>
+          <input type="text" id="name" placeholder="Enter your full name" required>
+        </div>
+      </div>
+      
+      <div class="input-group">
+        <label for="email">Email Address</label>
+        <div class="input-field">
+          <i class="fas fa-envelope field-icon"></i>
+          <input type="email" id="email" placeholder="Enter your email" required>
+        </div>
+      </div>
+      
+      <div class="input-group">
+        <label for="password">Password</label>
+        <div class="input-field">
+          <i class="fas fa-lock field-icon"></i>
+          <input type="password" id="password" placeholder="Create a password" required>
+          <button type="button" class="password-toggle" onclick="togglePassword()">
+            <i id="togglePasswordIcon" class="fas fa-eye"></i>
+          </button>
+        </div>
+      </div>
+      
+      <div class="input-group">
+        <label for="phone">Phone Number</label>
+        <div class="input-field">
+          <i class="fas fa-phone field-icon"></i>
+          <input type="text" id="phone" placeholder="Enter your phone number">
+        </div>
+      </div>
+      
+      <div class="input-group">
+        <label for="userType">I am a</label>
+        <div class="input-field">
+          <i class="fas fa-users field-icon"></i>
+          <select id="userType">
+            <option value="OWNER">Property Owner</option>
+            <option value="TENANT">Tenant</option>
+          </select>
+        </div>
+      </div>
+      
+      <button type="submit">Register Account</button>
+    </form>
+    
+    <div class="login-link">
+      Already have an account? <a href="/sharewani/pages/login">Log in</a>
+    </div>
+  </div>
 </body>
 </html>

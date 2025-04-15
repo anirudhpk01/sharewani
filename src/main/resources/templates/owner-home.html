@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
   <title>Owner Dashboard</title>
@@ -26,6 +26,106 @@
   <button onclick="location.href='/sharewani/pages/add-item'">➕ List New Item</button>
   <button onclick="location.href='/sharewani/pages/my-items'">📦 View My Items</button>
   <button onclick="location.href='/sharewani/pages/view-requests'">📄 View Rental Requests</button>
+
+</body>
+</html> -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Owner Dashboard</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f2f4f8;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    /* Navbar */
+    .navbar {
+      background-color: #1e3a8a;
+      padding: 1rem 2rem;
+      color: white;
+      font-size: 1.5rem;
+      font-weight: bold;
+      text-align: center;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+
+    /* Main content */
+    .container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 30px;
+      color: #1e293b;
+    }
+
+    .button-group {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+      width: 100%;
+      max-width: 300px;
+    }
+
+    .button-group button {
+      background-color: #3b82f6;
+      color: white;
+      border: none;
+      padding: 12px;
+      font-size: 1rem;
+      border-radius: 8px;
+      transition: background-color 0.3s ease;
+      cursor: pointer;
+    }
+
+    .button-group button:hover {
+      background-color: #2563eb;
+    }
+
+    /* Footer */
+    .footer {
+      background-color: #1e3a8a;
+      color: white;
+      text-align: center;
+      padding: 1rem;
+      font-size: 0.9rem;
+    }
+
+  </style>
+</head>
+<body>
+
+  <div class="navbar">Sharewani</div>
+
+  <div class="container">
+    <h1>👋 Welcome, Owner!</h1>
+    <div class="button-group">
+      <button onclick="location.href='/sharewani/pages/add-item'">➕ List New Item</button>
+      <button onclick="location.href='/sharewani/pages/my-items'">📦 View My Items</button>
+      <button onclick="location.href='/sharewani/pages/view-requests'">📄 View Rental Requests</button>
+    </div>
+  </div>
+
+  <div class="footer">Sharewani</div>
 
 </body>
 </html>

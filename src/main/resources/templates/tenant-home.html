@@ -1,12 +1,235 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tenant Home</title>
+  <style>
+    :root {
+      --primary: #4361ee;
+      --primary-light: #4895ef;
+      --primary-dark: #3f37c9;
+      --accent: #f72585;
+      --background: #f8f9fa;
+      --text: #212529;
+      --light: #e9ecef;
+      --card: #ffffff;
+      --shadow: rgba(0, 0, 0, 0.1);
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    body {
+      background: var(--background);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 0;
+      background-image: linear-gradient(135deg, rgba(67, 97, 238, 0.05) 0%, rgba(72, 149, 239, 0.05) 100%);
+    }
+    
+    .navbar {
+      width: 100%;
+      background-color: var(--primary);
+      color: white;
+      padding: 1rem 2rem;
+      box-shadow: 0 2px 10px var(--shadow);
+      position: relative;
+    }
+    
+    .navbar-brand {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+    
+    .container {
+      width: 100%;
+      max-width: 800px;
+      text-align: center;
+      padding: 3rem 1rem;
+    }
+    
+    .header {
+      margin-bottom: 3rem;
+      animation: fadeDown 0.8s ease-out;
+    }
+    
+    .logo {
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      color: var(--primary);
+    }
+    
+    h2 {
+      font-size: 2.5rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      color: var(--primary-dark);
+    }
+    
+    .subtitle {
+      color: var(--text);
+      opacity: 0.8;
+      font-size: 1.1rem;
+      margin-bottom: 1.5rem;
+    }
+    
+    .buttons-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+      margin-top: 2rem;
+      animation: fadeUp 1s ease-out 0.3s backwards;
+    }
+    
+    .nav-button {
+      position: relative;
+      background: var(--card);
+      border: none;
+      border-radius: 12px;
+      padding: 2rem 1.5rem;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 8px 20px var(--shadow);
+      text-align: center;
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    
+    .nav-button::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, var(--primary), var(--primary-light));
+      transform: scaleX(0);
+      transform-origin: left;
+      transition: transform 0.3s ease;
+    }
+    
+    .nav-button:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 12px 25px rgba(0, 0, 0, 0.15);
+    }
+    
+    .nav-button:hover::before {
+      transform: scaleX(1);
+    }
+    
+    .nav-button:active {
+      transform: translateY(0);
+    }
+    
+    .button-icon {
+      font-size: 2.5rem;
+      margin-bottom: 1rem;
+      color: var(--primary);
+    }
+    
+    .button-text {
+      font-weight: 600;
+      font-size: 1.2rem;
+    }
+    
+    .button-description {
+      margin-top: 0.5rem;
+      font-size: 0.9rem;
+      opacity: 0.7;
+    }
+    
+    .footer {
+      margin-top: 4rem;
+      opacity: 0.7;
+      font-size: 0.9rem;
+      animation: fadeUp 1.2s ease-out 0.6s backwards;
+    }
+    
+    @keyframes fadeDown {
+      from {
+        opacity: 0;
+        transform: translateY(-20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    @keyframes fadeUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    @media (max-width: 600px) {
+      .buttons-container {
+        grid-template-columns: 1fr;
+      }
+      
+      h2 {
+        font-size: 2rem;
+      }
+      
+      .navbar {
+        padding: 0.8rem 1rem;
+      }
+    }
+  </style>
 </head>
 <body>
-  <h2>Welcome, Tenant!</h2>
-  <button onclick="location.href='/sharewani/pages/items'">🔍 Browse Items</button>
-  <button onclick="location.href='/sharewani/pages/view-my-rentals'">📦 My Rentals</button>
-  <button onclick="location.href='/sharewani/pages/shared-rental'">🤝 Shared Rentals</button>
+  <nav class="navbar">
+    <div class="navbar-brand">Sharewani</div>
+  </nav>
+  
+  <div class="container">
+    <div class="header">
+      <div class="logo">🏠</div>
+      <h2>Welcome, Tenant!</h2>
+      <p class="subtitle">Manage your rentals and discover new items</p>
+    </div>
+    
+    <div class="buttons-container">
+      <button class="nav-button" onclick="location.href='/sharewani/pages/items'">
+        <div class="button-icon">🔍</div>
+        <div class="button-text">Browse Items</div>
+        <div class="button-description">Discover items available for rent</div>
+      </button>
+      
+      <button class="nav-button" onclick="location.href='/sharewani/pages/view-my-rentals'">
+        <div class="button-icon">📦</div>
+        <div class="button-text">My Rentals</div>
+        <div class="button-description">View and manage your rented items</div>
+      </button>
+      
+      <button class="nav-button" onclick="location.href='/sharewani/pages/shared-rental'">
+        <div class="button-icon">🤝</div>
+        <div class="button-text">Shared Rentals</div>
+        <div class="button-description">Items shared with other tenants</div>
+      </button>
+    </div>
+    
+    <div class="footer">
+      © 2025 ShareWani Rental Platform
+    </div>
+  </div>
 </body>
 </html>

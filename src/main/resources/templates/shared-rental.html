@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
     <title>Shared Rental</title>
@@ -92,5 +92,332 @@
     </form>
 
     <br><a href="/sharewani/pages/items">Back to Items</a>
+</body>
+</html> -->
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Shared Rental</title>
+    <style>
+        :root {
+          --primary-color: #4a6fa5;
+          --secondary-color: #e8f1f5;
+          --accent-color: #ff7e3e;
+          --green-accent: #3bb077;
+          --text-color: #333;
+          --light-text: #666;
+          --card-bg: #fff;
+          --navbar-bg: #4a6fa5;
+          --hover-color: #6189c2;
+          --border-color: #e0e0e0;
+          --input-bg: #f5f7fa;
+        }
+        
+        * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+        }
+        
+        body {
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+          background-color: var(--secondary-color);
+          color: var(--text-color);
+          line-height: 1.6;
+          min-height: 100vh;
+          display: flex;
+          flex-direction: column;
+        }
+        
+        .navbar {
+          background-color: var(--navbar-bg);
+          color: white;
+          padding: 15px 30px;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+          display: flex;
+          align-items: center;
+        }
+        
+        .navbar h1 {
+          font-size: 1.8rem;
+          font-weight: 600;
+        }
+        
+        .navbar .logo {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        
+        .logo-icon {
+          font-size: 24px;
+        }
+        
+        .container {
+          flex: 1;
+          padding: 30px;
+          max-width: 900px;
+          margin: 0 auto;
+          width: 100%;
+        }
+        
+        h1.page-title {
+          text-align: center;
+          font-size: 2.4rem;
+          margin-bottom: 20px;
+          color: var(--primary-color);
+        }
+        
+        h2 {
+          font-size: 1.8rem;
+          margin: 30px 0 20px;
+          color: var(--primary-color);
+          position: relative;
+          padding-bottom: 10px;
+          border-bottom: 2px solid var(--accent-color);
+          max-width: 600px;
+        }
+        
+        form {
+          background-color: var(--card-bg);
+          border-radius: 10px;
+          padding: 25px;
+          box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+          margin-bottom: 30px;
+          border: 1px solid var(--border-color);
+          position: relative;
+          overflow: hidden;
+        }
+        
+        form::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 5px;
+          height: 100%;
+        }
+        
+        form:nth-of-type(1)::before {
+          background-color: var(--accent-color);
+        }
+        
+        form:nth-of-type(2)::before {
+          background-color: var(--green-accent);
+        }
+        
+        label {
+          display: block;
+          margin-bottom: 8px;
+          font-weight: bold;
+          color: var(--text-color);
+        }
+        
+        input[type="number"], 
+        input[type="text"] {
+          width: 100%;
+          padding: 12px;
+          margin-bottom: 20px;
+          border-radius: 5px;
+          border: 1px solid var(--border-color);
+          background-color: var(--input-bg);
+          color: var(--text-color);
+          transition: border-color 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        input:focus {
+          outline: none;
+          border-color: var(--primary-color);
+          box-shadow: 0 0 0 3px rgba(74, 111, 165, 0.2);
+        }
+        
+        button[type="submit"] {
+          display: block;
+          width: 100%;
+          border: none;
+          padding: 14px;
+          border-radius: 5px;
+          cursor: pointer;
+          font-weight: bold;
+          font-size: 1rem;
+          transition: background-color 0.2s ease, transform 0.1s ease;
+          box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+          color: white;
+        }
+        
+        form:nth-of-type(1) button[type="submit"] {
+          background-color: var(--accent-color);
+        }
+        
+        form:nth-of-type(1) button[type="submit"]:hover {
+          background-color: #ff6a1f;
+        }
+        
+        form:nth-of-type(2) button[type="submit"] {
+          background-color: var(--green-accent);
+        }
+        
+        form:nth-of-type(2) button[type="submit"]:hover {
+          background-color: #2d9964;
+        }
+        
+        button:hover {
+          transform: translateY(-2px);
+        }
+        
+        button:active {
+          transform: translateY(0);
+        }
+        
+        hr {
+          border: none;
+          height: 1px;
+          background-color: var(--border-color);
+          margin: 30px 0;
+        }
+        
+        a.back-button {
+          display: inline-block;
+          text-align: center;
+          color: white;
+          text-decoration: none;
+          padding: 10px 20px;
+          background-color: var(--primary-color);
+          border-radius: 5px;
+          font-weight: bold;
+          transition: background-color 0.2s ease, transform 0.1s ease;
+          margin-top: 20px;
+          box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+        }
+        
+        a.back-button:hover {
+          background-color: var(--hover-color);
+          transform: translateY(-2px);
+        }
+        
+        a.back-button:active {
+          transform: translateY(0);
+        }
+        
+        .footer {
+          background-color: var(--navbar-bg);
+          color: white;
+          text-align: center;
+          padding: 20px;
+          margin-top: auto;
+          font-size: 0.9rem;
+        }
+        
+        .footer p {
+          color: rgba(255,255,255,0.8);
+          margin: 5px 0;
+        }
+    </style>
+    <script>
+        async function createSharedRental(event) {
+            event.preventDefault();
+
+            const itemId = document.getElementById("itemId").value;
+            const maxShareCount = document.getElementById("maxShareCount").value;
+            const schedule = document.getElementById("schedule").value;
+            const tenantIds = document.getElementById("tenantIds").value
+                .split(",")
+                .map(id => Number(id.trim()))
+                .filter(id => !isNaN(id));
+
+            const payload = {
+                itemId: Number(itemId),
+                maxShareCount: Number(maxShareCount),
+                schedule: schedule,
+                tenantIds: tenantIds
+            };
+
+            try {
+                const res = await fetch("/sharewani/shared-rentals", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!res.ok) throw new Error("Failed to create shared rental");
+
+                const data = await res.json();
+                alert("✅ Shared rental created! ID: " + data.id);
+            } catch (err) {
+                alert("❌ Error: " + err.message);
+            }
+        }
+
+        async function joinSharedRental(event) {
+            event.preventDefault();
+
+            const sharedRentalId = document.getElementById("joinSharedRentalId").value;
+            const tenantId = document.getElementById("joinTenantId").value;
+
+            try {
+                const res = await fetch(`/sharewani/shared-rentals/${sharedRentalId}/join/${tenantId}`, {
+                    method: "POST"
+                });
+
+                if (!res.ok) throw new Error("Failed to join shared rental");
+
+                const data = await res.json();
+                alert("✅ Successfully joined shared rental! Current members: " + data.tenants.length);
+            } catch (err) {
+                alert("❌ Error: " + err.message);
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class="navbar">
+      <div class="logo">
+        <span class="logo-icon">👚</span>
+        <h1>ShareWani</h1>
+      </div>
+    </div>
+    
+    <div class="container">
+        <h1 class="page-title">Shared Rentals</h1>
+
+        <h2>Create Shared Rental</h2>
+        <form onsubmit="createSharedRental(event)">
+            <label for="itemId">Item ID:</label>
+            <input type="number" id="itemId" required>
+
+            <label for="maxShareCount">Max Share Count:</label>
+            <input type="number" id="maxShareCount" min="2" required>
+
+            <label for="schedule">Schedule (text):</label>
+            <input type="text" id="schedule">
+
+            <label for="tenantIds">Initial Tenant IDs (comma-separated, optional):</label>
+            <input type="text" id="tenantIds">
+
+            <button type="submit">Create Shared Rental</button>
+        </form>
+
+        <hr>
+
+        <h2>Join Existing Shared Rental</h2>
+        <form onsubmit="joinSharedRental(event)">
+            <label for="joinSharedRentalId">Shared Rental ID:</label>
+            <input type="number" id="joinSharedRentalId" required>
+
+            <label for="joinTenantId">Your Tenant ID:</label>
+            <input type="number" id="joinTenantId" required>
+
+            <button type="submit">Join Rental</button>
+        </form>
+
+        <a href="/sharewani/pages/items" class="back-button">Back to Items</a>
+    </div>
+    
+    <div class="footer">
+      <p>ShareWani - Rent Traditional Wear For Every Occasion</p>
+      <p>&copy; 2025 ShareWani. All rights reserved.</p>
+    </div>
 </body>
 </html>

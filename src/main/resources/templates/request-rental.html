@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
   <title>Request Rental</title>
@@ -34,5 +34,130 @@
       }
     });
   </script>
+</body>
+</html> -->
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Request Rental</title>
+  <style>
+    body {
+      font-family: 'Arial', sans-serif;
+      background-color: #1e2a47;
+      color: white;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* Navbar Styling */
+    nav {
+      background-color: #0d1b2a;
+      padding: 15px;
+      text-align: center;
+      font-size: 2em;
+      color: white;
+    }
+
+    /* Main Content Styling */
+    h2 {
+      color: #fff;
+      font-size: 2.5em;
+      text-align: center;
+      margin-top: 100px;
+    }
+
+    form {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 30px;
+    }
+
+    label {
+      font-size: 1.2em;
+      margin-bottom: 10px;
+    }
+
+    input[type="date"] {
+      padding: 8px;
+      border-radius: 5px;
+      border: none;
+      margin-bottom: 20px;
+    }
+
+    button {
+      background-color: #4b79a1;
+      color: white;
+      border: none;
+      padding: 10px 30px;
+      border-radius: 5px;
+      font-size: 1.1em;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #3b6380;
+    }
+
+    /* Footer Styling */
+    .footer {
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      background-color: #0d1b2a;
+      color: white;
+      text-align: center;
+      padding: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navbar -->
+  <nav>Sharewani</nav>
+
+  <!-- Main Content -->
+  <h2>Rental Request</h2>
+  <form id="rentalForm">
+    <label>Start Date: <input type="date" id="startDate" required></label><br><br>
+    <label>End Date: <input type="date" id="endDate" required></label><br><br>
+    <button type="submit">Submit Request</button>
+  </form>
+
+  <!-- Footer -->
+  <div class="footer">
+    <p>&copy; 2025 Sharewani. All rights reserved.</p>
+  </div>
+
+  <script>
+    document.getElementById("rentalForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      const itemId = localStorage.getItem("selectedItemId");
+      const tenantId = localStorage.getItem("tenantId");
+
+      const startDate = document.getElementById("startDate").value;
+      const endDate = document.getElementById("endDate").value;
+
+      const response = await fetch("/sharewani/rentals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemId, tenantId, startDate, endDate })
+      });
+
+      if (response.ok) {
+        alert("✅ Rental request submitted!");
+        location.href = "/sharewani/pages/view-my-rentals";
+      } else {
+        alert("❌ Failed to submit request.");
+      }
+    });
+  </script>
+
 </body>
 </html>

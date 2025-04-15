@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
     <title>Make Payment</title>
@@ -61,5 +61,149 @@ const amount = localStorage.getItem("amount");
     </form>
 
     <br><a href="/sharewani/pages/items">Back to Items</a>
+</body>
+</html> -->
+
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Make Payment</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            background-color: #1e2a47;
+            color: white;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Navbar Styling */
+        nav {
+            background-color: #0d1b2a;
+            padding: 15px;
+            text-align: center;
+            font-size: 2em;
+            color: white;
+        }
+
+        /* Main Content Styling */
+        h1 {
+            color: #fff;
+            font-size: 2.5em;
+            text-align: center;
+            margin-top: 100px;
+        }
+
+        form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 30px;
+        }
+
+        label {
+            font-size: 1.2em;
+            margin-bottom: 10px;
+        }
+
+        select, button {
+            padding: 10px;
+            border-radius: 5px;
+            border: none;
+            margin-bottom: 20px;
+            font-size: 1.1em;
+        }
+
+        button {
+            background-color: #4b79a1;
+            color: white;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #3b6380;
+        }
+
+        /* Footer Styling */
+        .footer {
+            position: fixed;
+            bottom: 0;
+            width: 100%;
+            background-color: #0d1b2a;
+            color: white;
+            text-align: center;
+            padding: 10px;
+        }
+    </style>
+</head>
+<body>
+
+  <!-- Navbar -->
+  <nav>Sharewani</nav>
+
+  <!-- Main Content -->
+  <h1>Make a Payment</h1>
+
+  <form onsubmit="submitPayment(event)">
+    <label>Payment Method:</label>
+    <select id="method">
+        <option value="CARD">Credit Card</option>
+        <option value="BANK_TRANSFER">Bank Transfer</option>
+    </select><br><br>
+
+    <label>Amount: ₹<span id="amountDisplay"></span></label><br><br>
+
+    <button type="submit">Pay Now</button>
+  </form>
+
+  <!-- Footer -->
+  <div class="footer">
+    <p>&copy; 2025 Sharewani. All rights reserved.</p>
+  </div>
+
+  <script>
+    document.getElementById('amountDisplay').textContent = localStorage.getItem('amount');
+
+    async function submitPayment(event) {
+        event.preventDefault();
+
+        const rentalId = localStorage.getItem("rentalId");
+        const amount = localStorage.getItem("amount");
+
+        const method = document.getElementById("method").value;
+
+        const payload = {
+            rentalId: Number(rentalId),
+            method: method,
+            amount: parseFloat(amount)
+        };
+
+        try {
+            const response = await fetch("/sharewani/payments", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                alert("✅ Payment Successful! ID: " + data.id);
+            } else {
+                const error = await response.text();
+                alert("❌ Payment Failed: " + error);
+            }
+        } catch (err) {
+            alert("🚫 Error: " + err.message);
+        }
+    }
+  </script>
+
 </body>
 </html>

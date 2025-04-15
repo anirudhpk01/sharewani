@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
   <title>My Items</title>
@@ -40,5 +40,157 @@
 
   <br>
   <a href="/sharewani/pages/owner-homepage">🔙 Back to Owner Home</a>
+</body>
+</html> -->
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>My Items - Sharewani</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f9fafb;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      color: #1f2937;
+    }
+
+    .navbar {
+      background-color: #1e3a8a;
+      padding: 1rem;
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: white;
+    }
+
+    .container {
+      flex: 1;
+      padding: 40px 20px;
+      max-width: 1000px;
+      margin: auto;
+    }
+
+    h2 {
+      text-align: center;
+      color: #1e293b;
+      margin-bottom: 30px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background-color: white;
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+    }
+
+    th, td {
+      padding: 14px 18px;
+      text-align: left;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    th {
+      background-color: #f1f5f9;
+      font-weight: 600;
+      color: #374151;
+    }
+
+    td {
+      color: #334155;
+    }
+
+    tr:hover {
+      background-color: #f9fafb;
+    }
+
+    .back-link {
+      margin-top: 25px;
+      text-align: center;
+    }
+
+    .back-link a {
+      color: #1e40af;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .footer {
+      background-color: #1e3a8a;
+      color: white;
+      text-align: center;
+      padding: 1rem;
+      font-size: 0.9rem;
+    }
+  </style>
+  <script>
+    async function loadMyItems() {
+      const ownerId = localStorage.getItem("ownerId"); // Must be set on login
+
+      if (!ownerId) {
+        alert("⚠️ Owner not logged in!");
+        return;
+      }
+
+      const response = await fetch(`/sharewani/items/owner/${ownerId}`);
+      const items = await response.json();
+
+      const table = document.getElementById("itemsTable");
+      table.innerHTML = `
+        <tr>
+          <th>Name</th>
+          <th>Description</th>
+          <th>Rate (₹)</th>
+          <th>Status</th>
+        </tr>`;
+
+      items.forEach(item => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${item.name}</td>
+          <td>${item.description}</td>
+          <td>${item.dailyRate}</td>
+          <td>${item.available ? "✅ Available" : "❌ Unavailable"}</td>
+        `;
+        table.appendChild(row);
+      });
+    }
+
+    window.onload = loadMyItems;
+  </script>
+</head>
+<body>
+
+  <div class="navbar">Sharewani</div>
+
+  <div class="container">
+    <h2>📦 My Listed Items</h2>
+    <table id="itemsTable">
+      <tr>
+        <th>Name</th>
+        <th>Description</th>
+        <th>Rate (₹)</th>
+        <th>Status</th>
+      </tr>
+    </table>
+
+    <div class="back-link">
+      <a href="/sharewani/pages/owner-homepage">🔙 Back to Owner Home</a>
+    </div>
+  </div>
+
+  <div class="footer">Sharewani</div>
+
 </body>
 </html>

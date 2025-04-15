@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
   <title>Available Items</title>
@@ -34,5 +34,259 @@
 <body>
   <h2>Available Items</h2>
   <div id="itemList">Loading...</div>
+</body>
+</html> -->
+
+
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Available Items</title>
+  <style>
+    :root {
+      --primary-color: #4a6fa5;
+      --secondary-color: #e8f1f5;
+      --accent-color: #ff7e3e;
+      --green-accent: #3bb077;
+      --text-color: #333;
+      --light-text: #666;
+      --card-bg: #fff;
+      --navbar-bg: #4a6fa5;
+      --hover-color: #6189c2;
+      --border-color: #e0e0e0;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: var(--secondary-color);
+      color: var(--text-color);
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    
+    .navbar {
+      background-color: var(--navbar-bg);
+      color: white;
+      padding: 15px 30px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      display: flex;
+      align-items: center;
+    }
+    
+    .navbar h1 {
+      font-size: 1.8rem;
+      font-weight: 600;
+    }
+    
+    .navbar .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .logo-icon {
+      font-size: 24px;
+    }
+    
+    .container {
+      flex: 1;
+      padding: 30px;
+      max-width: 1200px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    
+    h2 {
+      text-align: center;
+      font-size: 2.2rem;
+      margin-bottom: 30px;
+      color: var(--primary-color);
+      position: relative;
+      padding-bottom: 15px;
+    }
+    
+    h2::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100px;
+      height: 3px;
+      background-color: var(--accent-color);
+      border-radius: 3px;
+    }
+    
+    #itemList {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 25px;
+    }
+    
+    #itemList > div {
+      background-color: var(--card-bg);
+      border-radius: 10px;
+      padding: 20px;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.05);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+      border: 1px solid var(--border-color);
+      position: relative;
+      overflow: hidden;
+    }
+    
+    #itemList > div:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 12px 20px rgba(0,0,0,0.1);
+    }
+    
+    #itemList > div::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 5px;
+      height: 100%;
+      background-color: var(--accent-color);
+    }
+    
+    h3 {
+      margin-top: 0;
+      font-size: 1.4rem;
+      color: var(--primary-color);
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 10px;
+      margin-bottom: 15px;
+    }
+    
+    p {
+      margin: 10px 0;
+      color: var(--light-text);
+    }
+    
+    button {
+      background-color: var(--accent-color);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-weight: bold;
+      margin-top: 15px;
+      transition: background-color 0.2s ease, transform 0.1s ease;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.1);
+    }
+    
+    button:hover {
+      background-color: #ff6a1f;
+      transform: translateY(-2px);
+    }
+    
+    button:active {
+      transform: translateY(0);
+    }
+    
+    .loading {
+      text-align: center;
+      font-size: 1.2rem;
+      color: var(--primary-color);
+      padding: 40px;
+      animation: pulse 1.5s infinite;
+    }
+    
+    @keyframes pulse {
+      0% { opacity: 0.6; }
+      50% { opacity: 1; }
+      100% { opacity: 0.6; }
+    }
+    
+    .status {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: bold;
+      background-color: #edf2f7;
+      color: var(--primary-color);
+    }
+    
+    .price {
+      font-size: 1.3rem;
+      font-weight: bold;
+      color: var(--accent-color);
+    }
+    
+    .unavailable {
+      color: #888;
+      font-style: italic;
+    }
+    
+    .footer {
+      background-color: var(--navbar-bg);
+      color: white;
+      text-align: center;
+      padding: 20px;
+      margin-top: auto;
+      font-size: 0.9rem;
+    }
+    
+    .footer p {
+      color: rgba(255,255,255,0.8);
+      margin: 5px 0;
+    }
+  </style>
+  <script>
+    async function loadItems() {
+      const res = await fetch("/sharewani/items");
+      const items = await res.json();
+      const container = document.getElementById("itemList");
+      container.innerHTML = "";
+
+      items.forEach(item => {
+        const card = document.createElement("div");
+        card.innerHTML = `
+          <h3>${item.name}</h3>
+          <p>${item.description}</p>
+          <p class="price">₹${item.dailyRate}/day</p>
+          <p>Status: <span class="status">${item.currentState}</span></p>
+          ${item.available ? `<button onclick="startRental(${item.id})">Rent Now</button>` : "<p class='unavailable'>Currently Unavailable</p>"}
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function startRental(itemId) {
+      localStorage.setItem("selectedItemId", itemId);
+      location.href = "/sharewani/pages/request-rental";
+    }
+
+    window.onload = loadItems;
+  </script>
+</head>
+<body>
+  <div class="navbar">
+    <div class="logo">
+      <span class="logo-icon">👚</span>
+      <h1>ShareWani</h1>
+    </div>
+  </div>
+  
+  <div class="container">
+    <h2>Available Items</h2>
+    <div id="itemList" class="loading">Loading...</div>
+  </div>
+  
+  <div class="footer">
+    <p>ShareWani - Rent Traditional Wear For Every Occasion</p>
+    <p>&copy; 2025 ShareWani. All rights reserved.</p>
+  </div>
 </body>
 </html>

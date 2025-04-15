@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
     <title>Add Item - Sharewani</title>
@@ -26,5 +26,159 @@
     </form>
 
     <br><a href="/sharewani/login">Back to login</a>
+</body>
+</html> -->
+
+
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Add Item - Sharewani</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f3f4f6;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    .navbar {
+      background-color: #1e3a8a;
+      padding: 1rem;
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: white;
+    }
+
+    .container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    h2 {
+      margin-bottom: 20px;
+      color: #1e293b;
+    }
+
+    form {
+      background-color: white;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      width: 100%;
+      max-width: 500px;
+    }
+
+    label {
+      font-weight: 500;
+      display: block;
+      margin-top: 15px;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 10px;
+      margin-top: 5px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 1rem;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+
+    button[type="submit"] {
+      margin-top: 20px;
+      padding: 12px;
+      background-color: #3b82f6;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      width: 100%;
+      transition: background-color 0.3s ease;
+    }
+
+    button[type="submit"]:hover {
+      background-color: #2563eb;
+    }
+
+    .back-link {
+      margin-top: 20px;
+      text-align: center;
+    }
+
+    .back-link a {
+      color: #1e40af;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .footer {
+      background-color: #1e3a8a;
+      color: white;
+      text-align: center;
+      padding: 1rem;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="navbar">Sharewani</div>
+
+  <div class="container">
+    <h2>🧾 Add New Item</h2>
+
+    <form action="/sharewani/items" method="post" enctype="multipart/form-data">
+      <label>Item Name:</label>
+      <input type="text" name="name" required>
+
+      <label>Description:</label>
+      <textarea name="description" required></textarea>
+
+      <label>Daily Rate (₹):</label>
+      <input type="number" name="dailyRate" step="0.01" required>
+
+      <label>Owner ID:</label>
+      <input type="number" name="ownerId" id="ownerId" required readonly>
+
+      <label>Image (optional):</label>
+      <input type="file" name="image">
+
+      <button type="submit">Add Item</button>
+    </form>
+
+    <div class="back-link">
+      <a href="/sharewani/login">🔙 Back to login</a>
+    </div>
+  </div>
+
+  <div class="footer">Sharewani</div>
+
+  <script>
+    // Auto-fill owner ID from localStorage
+    const storedOwnerId = localStorage.getItem('ownerId');
+    if (storedOwnerId) {
+      document.getElementById('ownerId').value = storedOwnerId;
+    }
+  </script>
 </body>
 </html>
