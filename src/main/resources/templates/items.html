@@ -1,22 +1,38 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html>
 <head>
-    <title>Available Items - Sharewani</title>
+  <title>Available Items</title>
+  <script>
+    async function loadItems() {
+      const res = await fetch("/sharewani/items");
+      const items = await res.json();
+      const container = document.getElementById("itemList");
+      container.innerHTML = "";
+
+      items.forEach(item => {
+        const card = document.createElement("div");
+        card.innerHTML = `
+          <h3>${item.name}</h3>
+          <p>${item.description}</p>
+          <p>₹${item.dailyRate}/day</p>
+          <p>Status: ${item.currentState}</p>
+          ${item.available ? `<button onclick="startRental(${item.id})">Rent</button>` : ""}
+          <hr/>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function startRental(itemId) {
+      localStorage.setItem("selectedItemId", itemId);
+      location.href = "/sharewani/pages/request-rental";
+    }
+
+    window.onload = loadItems;
+  </script>
 </head>
 <body>
-    <h2>Available Items</h2>
-
-    <div th:each="item : ${items}">
-        <hr>
-        <h3 th:text="${item.name}">Item Name</h3>
-        <p th:text="${item.description}">Item description</p>
-        <p>Rate: ₹<span th:text="${item.dailyRate}"></span>/day</p>
-        <p>Available: <span th:text="${item.available ? 'Yes' : 'No'}"></span></p>
-        <p th:if="${item.imageUrl != null}">
-            <img th:src="@{${item.imageUrl}}" width="200px"/>
-        </p>
-    </div>
-
-    <br><a href="/sharewani/login">Back to login</a>
+  <h2>Available Items</h2>
+  <div id="itemList">Loading...</div>
 </body>
 </html>

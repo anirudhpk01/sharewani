@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><title>All Payments</title></head>
+<body>
+  <h2>Payment Records</h2>
+  <ul id="paymentList"></ul>
+
+  <script>
+    fetch("/sharewani/admin/payments")
+      .then(res => res.json())
+      .then(data => {
+        const ul = document.getElementById("paymentList");
+        data.forEach(p => {
+          const li = document.createElement("li");
+          li.innerText = `Payment ID: ${p.id} | Amount: ₹${p.amount} | Method: ${p.method} | Date: ${p.paymentDate}`;
+          ul.appendChild(li);
+        });
+      });
+  </script>
+</body>
+</html>

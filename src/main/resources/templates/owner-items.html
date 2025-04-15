@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head><title>My Items</title></head>
+<body>
+<h2>My Listed Items</h2>
+<table border="1">
+    <tr>
+        <th>ID</th><th>Name</th><th>Description</th><th>Rate</th>
+    </tr>
+    <tr th:each="item : ${items}">
+        <td th:text="${item.id}"></td>
+        <td th:text="${item.name}"></td>
+        <td th:text="${item.description}"></td>
+        <td th:text="${item.dailyRate}"></td>
+    </tr>
+</table>
+</body>
+</html>

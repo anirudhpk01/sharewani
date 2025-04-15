@@ -86,4 +86,10 @@ public class RentalController {
     public ResponseEntity<List<Rental>> getRentalsByTenant(@PathVariable Long tenantId) {
         return ResponseEntity.ok(rentalService.getRentalsByTenant(tenantId));
     }
+
+    @GetMapping("/owner/{ownerId}")
+public ResponseEntity<List<Rental>> getRentalsByOwner(@PathVariable Long ownerId) {
+    return ResponseEntity.ok(rentalService.getRentalsByOwner(ownerId));
+}
+
 }

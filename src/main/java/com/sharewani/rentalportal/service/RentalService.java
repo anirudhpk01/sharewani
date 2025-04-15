@@ -17,7 +17,9 @@ import com.sharewani.rentalportal.service.observer.NotificationSubject;
 import com.sharewani.rentalportal.service.observer.TenantNotificationObserver;
 import com.sharewani.rentalportal.service.observer.OwnerNotificationObserver;
 
+
 import java.util.List;
+import java.util.ArrayList;
 
 @Service
 @RequiredArgsConstructor
@@ -30,6 +32,10 @@ private OwnerNotificationObserver ownerObserver;
 @Autowired
 private TenantNotificationObserver tenantObserver;
 
+
+private final OwnerRepository ownerRepository; // add to constructor/service
+
+
 // Create and reuse your notification subject
 private final NotificationSubject subject = new NotificationSubject();
 
@@ -38,7 +44,9 @@ private final NotificationSubject subject = new NotificationSubject();
     private final ItemRepository itemRepository;
     private final TenantRepository tenantRepository;
 
+  
     @Transactional
+
 
     
 
@@ -156,4 +164,20 @@ public List<Rental> getRentalsByTenant(Long tenantId) {
         return rentalRepository.findById(rentalId)
                 .orElseThrow(() -> new IllegalArgumentException("Rental not found"));
     }
+
+
+    public List<Rental> getRentalsByOwner(Long ownerId) {
+    Owner owner = ownerRepository.findById(ownerId)
+        .orElseThrow(() -> new IllegalArgumentException("Owner not found"));
+
+    List<Item> items = itemRepository.findByOwner(owner);
+    List<Rental> allRentals = new ArrayList<>();
+
+    for (Item item : items) {
+        allRentals.addAll(rentalRepository.findByItem(item));
+    }
+
+    return allRentals;
+}
+
 }

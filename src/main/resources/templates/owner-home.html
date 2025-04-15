@@ -1,13 +1,31 @@
 <!DOCTYPE html>
 <html>
-<head><title>Owner Home</title></head>
+<head>
+  <title>Owner Dashboard</title>
+  <style>
+    body {
+      font-family: Arial;
+      text-align: center;
+      margin-top: 50px;
+    }
+    h1 {
+      color: #444;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 10px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
+</head>
 <body>
-  <h1>Welcome Owner!</h1>
-  <p>You can add items, manage rentals, and view shared rentals here.</p>
-re
 
-  <a href="">List an Item </a>
+  <h1>👋 Welcome, Owner!</h1>
 
-  <a href="">Manage Rentals</a>
+  <button onclick="location.href='/sharewani/pages/add-item'">➕ List New Item</button>
+  <button onclick="location.href='/sharewani/pages/my-items'">📦 View My Items</button>
+  <button onclick="location.href='/sharewani/pages/view-requests'">📄 View Rental Requests</button>
+
 </body>
 </html>

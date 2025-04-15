@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>My Rentals</title>
+  <script>
+    async function loadMyRentals() {
+      const tenantId = localStorage.getItem("tenantId");
+      const res = await fetch(`/sharewani/rentals/tenant/${tenantId}`);
+      const rentals = await res.json();
+      const container = document.getElementById("rentalList");
+      container.innerHTML = "";
+
+      rentals.forEach(r => {
+        const card = document.createElement("div");
+        card.innerHTML = `
+          <h4>Item: ${r.item.name}</h4>
+          <p>Status: ${r.status}</p>
+          <p>Amount: ₹${r.amount}</p>
+          ${r.status === "APPROVED" ? `<button onclick="makePayment(${r.id}, ${r.amount})">Pay</button>` : ""}
+          <hr>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function makePayment(rentalId, amount) {
+      localStorage.setItem("rentalId", rentalId);
+      localStorage.setItem("amount", amount);
+      location.href = "/sharewani/pages/payment";
+    }
+
+    window.onload = loadMyRentals;
+  </script>
+</head>
+<body>
+  <h2>Your Rentals</h2>
+  <div id="rentalList">Loading...</div>
+</body>
+</html>

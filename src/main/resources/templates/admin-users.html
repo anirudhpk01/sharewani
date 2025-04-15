@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head><title>All Users</title></head>
+<body>
+  <h2>All Registered Users</h2>
+  <h3>Owners</h3>
+  <ul id="ownersList"></ul>
+  <h3>Tenants</h3>
+  <ul id="tenantsList"></ul>
+
+  <script>
+    async function fetchUsers() {
+      const owners = await fetch("/sharewani/admin/owners").then(res => res.json());
+      const tenants = await fetch("/sharewani/admin/tenants").then(res => res.json());
+
+      const ownerList = document.getElementById("ownersList");
+      owners.forEach(o => {
+        const li = document.createElement("li");
+        li.innerText = `ID: ${o.id} | Name: ${o.name} | Email: ${o.email}`;
+        ownerList.appendChild(li);
+      });
+
+      const tenantList = document.getElementById("tenantsList");
+      tenants.forEach(t => {
+        const li = document.createElement("li");
+        li.innerText = `ID: ${t.id} | Name: ${t.name} | Email: ${t.email}`;
+        tenantList.appendChild(li);
+      });
+    }
+
+    fetchUsers();
+  </script>
+</body>
+</html>

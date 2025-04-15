@@ -46,7 +46,7 @@ public String paymentPage() {
 }
 
 @GetMapping("/pages/my-rentals")
-public String viewMyRentals() {
+public String MyRentals() {
     return "my-rentals";
 }
 
@@ -69,6 +69,52 @@ public String ownerHome() {
 public String tenantHome() {
     return "tenant-home";
 }
+
+@GetMapping("/pages/my-items")
+public String myItems() {
+    return "my-items";
+}
+
+@GetMapping("/pages/view-requests")
+public String viewRequests() {
+    return "view-requests";
+}
+
+@GetMapping("/pages/request-rental")
+public String requestRentals() {
+    return "request-rental";
+}
+
+@GetMapping("/pages/view-my-rentals")
+public String viewMyRentals() {
+    return "view-my-rentals";
+}
+
+
+@GetMapping("/pages/admin-users")
+public String adminUsers() {
+    return "pages/admin-users";
+}
+
+@GetMapping("/pages/admin-items")
+public String adminItems() {
+    return "pages/admin-items";
+}
+
+@GetMapping("/pages/admin-rentals")
+public String adminRentals() {
+    return "pages/admin-rentals";
+}
+
+@GetMapping("/pages/admin-payments")
+public String adminPayments() {
+    return "pages/admin-payments";
+}
+
+
+
+
+
 
 
 

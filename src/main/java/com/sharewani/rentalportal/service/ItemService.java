@@ -37,13 +37,21 @@ public class ItemService {
         return itemRepository.findByAvailableTrue();
     }
 
-    public List<Item> getItemsByOwner(Owner owner) {
-        return itemRepository.findByOwner(owner);
-    }
+    // public List<Item> getItemsByOwner(Owner owner) {
+    //     return itemRepository.findByOwner(owner);
+    // }
+
+    public List<Item> getItemsByOwner(Long ownerId) {
+    Owner owner = ownerRepository.findById(ownerId)
+        .orElseThrow(() -> new IllegalArgumentException("Owner not found"));
+    return itemRepository.findByOwner(owner);
+}
+
 
     public Optional<Item> getItemById(Long id) {
         return itemRepository.findById(id);
     }
+   
 
     @Transactional
     public Item addItem(ItemDto itemDto) {

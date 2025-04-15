@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Request Rental</title>
+</head>
+<body>
+  <h2>Rental Request</h2>
+  <form id="rentalForm">
+    <label>Start Date: <input type="date" id="startDate" required></label><br><br>
+    <label>End Date: <input type="date" id="endDate" required></label><br><br>
+    <button type="submit">Submit Request</button>
+  </form>
+
+  <script>
+    document.getElementById("rentalForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+      const itemId = localStorage.getItem("selectedItemId");
+      const tenantId = localStorage.getItem("tenantId");
+
+      const startDate = document.getElementById("startDate").value;
+      const endDate = document.getElementById("endDate").value;
+
+      const response = await fetch("/sharewani/rentals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemId, tenantId, startDate, endDate })
+      });
+
+      if (response.ok) {
+        alert("✅ Rental request submitted!");
+        location.href = "/sharewani/pages/view-my-rentals";
+      } else {
+        alert("❌ Failed to submit request.");
+      }
+    });
+  </script>
+</body>
+</html>

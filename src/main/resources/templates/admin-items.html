@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><title>All Items</title></head>
+<body>
+  <h2>All Items</h2>
+  <ul id="itemList"></ul>
+
+  <script>
+    fetch("/sharewani/admin/items")
+      .then(res => res.json())
+      .then(data => {
+        const ul = document.getElementById("itemList");
+        data.forEach(item => {
+          const li = document.createElement("li");
+          li.innerText = `ID: ${item.id} | ${item.name} | ₹${item.dailyRate} | Available: ${item.available}`;
+          ul.appendChild(li);
+        });
+      });
+  </script>
+</body>
+</html>

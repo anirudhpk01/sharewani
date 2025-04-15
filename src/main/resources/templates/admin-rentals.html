@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><title>All Rentals</title></head>
+<body>
+  <h2>Rental History</h2>
+  <ul id="rentalList"></ul>
+
+  <script>
+    fetch("/sharewani/admin/rentals")
+      .then(res => res.json())
+      .then(data => {
+        const ul = document.getElementById("rentalList");
+        data.forEach(r => {
+          const li = document.createElement("li");
+          li.innerText = `Rental ID: ${r.id} | Item: ${r.item.name} | Tenant: ${r.tenant.name} | Status: ${r.status} | ₹${r.amount}`;
+          ul.appendChild(li);
+        });
+      });
+  </script>
+</body>
+</html>

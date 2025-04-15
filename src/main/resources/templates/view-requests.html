@@ -1,0 +1,110 @@
+<!-- <!DOCTYPE html>
+<html>
+<head>
+  <title>Rental Requests</title>
+  <script>
+    async function loadRequests() {
+      const ownerId = localStorage.getItem("ownerId");
+      if (!ownerId) {
+        alert("⚠️ Owner not logged in!");
+        return;
+      }
+
+      const response = await fetch(`/sharewani/rentals/owner/${ownerId}`);
+      const rentals = await response.json();
+
+      const table = document.getElementById("rentalTable");
+      table.innerHTML = "<tr><th>Item</th><th>Tenant</th><th>From</th><th>To</th><th>Status</th></tr>";
+
+      rentals.forEach(rental => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${rental.item.name}</td>
+          <td>${rental.tenant.name}</td>
+          <td>${rental.startDate}</td>
+          <td>${rental.endDate}</td>
+          <td>${rental.status}</td>
+        `;
+        table.appendChild(row);
+      });
+    }
+
+    window.onload = loadRequests;
+  </script>
+</head>
+<body>
+  <h2>📋 Rental Requests</h2>
+  <table border="1" id="rentalTable">
+    <tr><th>Item</th><th>Tenant</th><th>From</th><th>To</th><th>Status</th></tr>
+  </table>
+
+  <br>
+  <a href="/sharewani/pages/owner-homepage">🔙 Back to Owner Home</a>
+</body>
+</html> -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>View Rental Requests</title>
+  <script>
+    async function fetchRequests() {
+      const ownerId = localStorage.getItem("ownerId");
+
+      const response = await fetch(`/sharewani/items/owner/${ownerId}`);
+      const items = await response.json();
+
+      const rentalContainer = document.getElementById("rentalRequests");
+      rentalContainer.innerHTML = "";
+
+      for (const item of items) {
+        const rentalsRes = await fetch(`/sharewani/rentals/item/${item.id}`);
+        const rentals = await rentalsRes.json();
+
+        rentals.forEach(rental => {
+          const card = document.createElement("div");
+          card.innerHTML = `
+            <h4>Item: ${item.name}</h4>
+            <p>Rental ID: ${rental.id}</p>
+            <p>Tenant: ${rental.tenant.name}</p>
+            <p>Status: <strong>${rental.status}</strong></p>
+            <p>From: ${rental.startDate}, To: ${rental.endDate}</p>
+            <p>Amount: ₹${rental.amount}</p>
+            ${rental.status === "PENDING" ? `
+              <button onclick="approveRental(${rental.id})">✅ Approve</button>
+              <button onclick="rejectRental(${rental.id})">❌ Reject</button>
+            ` : ''}
+            <hr>
+          `;
+          rentalContainer.appendChild(card);
+        });
+      }
+    }
+
+    async function approveRental(rentalId) {
+      const response = await fetch(`/sharewani/rentals/${rentalId}/approve`, { method: "PUT" });
+      if (response.ok) {
+        alert("✅ Rental approved!");
+        fetchRequests(); // reload the list
+      } else {
+        alert("❌ Failed to approve rental");
+      }
+    }
+
+    async function rejectRental(rentalId) {
+      const response = await fetch(`/sharewani/rentals/${rentalId}/reject`, { method: "PUT" });
+      if (response.ok) {
+        alert("❌ Rental rejected!");
+        fetchRequests();
+      } else {
+        alert("❌ Failed to reject rental");
+      }
+    }
+
+    window.onload = fetchRequests;
+  </script>
+</head>
+<body>
+  <h2>Rental Requests for Your Items</h2>
+  <div id="rentalRequests">Loading...</div>
+</body>
+</html>

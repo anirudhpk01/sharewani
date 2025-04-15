@@ -38,12 +38,12 @@ public class ItemController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @GetMapping("/owner/{ownerId}")
-    public ResponseEntity<List<Item>> getItemsByOwner(@PathVariable Long ownerId) {
-        Owner owner = (Owner) userService.getUserById(ownerId)
-                .orElseThrow(() -> new IllegalArgumentException("Owner not found"));
-        return ResponseEntity.ok(itemService.getItemsByOwner(owner));
-    }
+    // @GetMapping("/owner/{ownerId}")
+    // public ResponseEntity<List<Item>> getItemsByOwner(@PathVariable Long ownerId) {
+    //     Owner owner = (Owner) userService.getUserById(ownerId)
+    //             .orElseThrow(() -> new IllegalArgumentException("Owner not found"));
+    //     return ResponseEntity.ok(itemService.getItemsByOwner(owner));
+    // }
 
     @PostMapping(consumes = {"multipart/form-data"})
     public ResponseEntity<Item> addItem(@Valid @ModelAttribute ItemDto itemDto) {
@@ -60,4 +60,11 @@ public class ItemController {
         itemService.deleteItem(id);
         return ResponseEntity.noContent().build();
     }
+
+
+    @GetMapping("/owner/{ownerId}")
+public ResponseEntity<List<Item>> getItemsByOwner(@PathVariable Long ownerId) {
+    return ResponseEntity.ok(itemService.getItemsByOwner(ownerId));
+}
+
 }

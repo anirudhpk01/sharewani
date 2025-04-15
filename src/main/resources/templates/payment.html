@@ -6,9 +6,13 @@
         async function submitPayment(event) {
             event.preventDefault();
 
-            const rentalId = document.getElementById("rentalId").value;
+            const rentalId = localStorage.getItem("rentalId");
+const amount = localStorage.getItem("amount");
+
+
+           
             const method = document.getElementById("method").value;
-            const amount = document.getElementById("amount").value;
+            
 
             const payload = {
                 rentalId: Number(rentalId),
@@ -42,8 +46,7 @@
     <h1>Make a Payment</h1>
 
     <form onsubmit="submitPayment(event)">
-        <label>Rental ID:</label>
-        <input type="number" id="rentalId" required><br><br>
+        
 
         <label>Payment Method:</label>
         <select id="method">

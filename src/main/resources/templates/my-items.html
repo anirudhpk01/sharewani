@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>My Items</title>
+  <script>
+    async function loadMyItems() {
+      const ownerId = localStorage.getItem("ownerId"); // Must be set on login
+
+      if (!ownerId) {
+        alert("⚠️ Owner not logged in!");
+        return;
+      }
+
+      const response = await fetch(`/sharewani/items/owner/${ownerId}`);
+      const items = await response.json();
+
+      const table = document.getElementById("itemsTable");
+      table.innerHTML = "<tr><th>Name</th><th>Description</th><th>Rate</th><th>Status</th></tr>";
+
+      items.forEach(item => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${item.name}</td>
+          <td>${item.description}</td>
+          <td>${item.dailyRate}</td>
+          <td>${item.available ? "Available" : "Unavailable"}</td>
+        `;
+        table.appendChild(row);
+      });
+    }
+
+    window.onload = loadMyItems;
+  </script>
+</head>
+<body>
+  <h2>📦 My Listed Items</h2>
+  <table border="1" id="itemsTable">
+    <tr><th>Name</th><th>Description</th><th>Rate</th><th>Status</th></tr>
+  </table>
+
+  <br>
+  <a href="/sharewani/pages/owner-homepage">🔙 Back to Owner Home</a>
+</body>
+</html>

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head><title>Manage Rentals</title></head>
+<body>
+<h2>Rentals for Your Items</h2>
+<table border="1">
+    <tr>
+        <th>Rental ID</th><th>Item ID</th><th>Tenant ID</th><th>Status</th>
+    </tr>
+    <tr th:each="rental : ${rentals}">
+        <td th:text="${rental.id}"></td>
+        <td th:text="${rental.item.id}"></td>
+        <td th:text="${rental.tenant.id}"></td>
+        <td th:text="${rental.status}"></td>
+    </tr>
+</table>
+</body>
+</html>
