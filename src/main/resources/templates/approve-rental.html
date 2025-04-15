@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Approve Rental</title>
+    <script>
+        async function approveRental(event) {
+            event.preventDefault();
+            const rentalId = document.getElementById("rentalId").value;
+
+            try {
+                const res = await fetch(`/sharewani/rentals/${rentalId}/approve`, {
+                    method: "PUT"
+                });
+
+                if (!res.ok) {
+                    const errText = await res.text();
+                    throw new Error("Failed to approve: " + errText);
+                }
+
+                const rental = await res.json();
+                alert("✅ Rental Approved!\nRental ID: " + rental.id + "\nStatus: " + rental.status + "\nItem Available: " + rental.item.available);
+            } catch (err) {
+                alert("❌ Error: " + err.message);
+            }
+        }
+    </script>
+</head>
+<body>
+    <h1>Approve Rental Request</h1>
+
+    <form onsubmit="approveRental(event)">
+        <label for="rentalId">Rental ID:</label>
+        <input type="number" id="rentalId" required><br><br>
+
+        <button type="submit">Approve</button>
+    </form>
+
+    <br><a href="/sharewani/pages/items">Back to Items</a>
+</body>
+</html>

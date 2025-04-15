@@ -1,33 +1,52 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html>
 <head>
-    <title>Register - Sharewani</title>
+  <title>Register</title>
+  <script>
+    async function registerUser(event) {
+      event.preventDefault();
+      const formData = {
+        name: document.getElementById("name").value,
+        email: document.getElementById("email").value,
+        password: document.getElementById("password").value,
+        phone: document.getElementById("phone").value,
+        userType: document.getElementById("userType").value
+      };
+
+      try {
+        const response = await fetch("/sharewani/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formData)
+        });
+
+        if (response.ok) {
+          alert("✅ Registration successful! Redirecting to login...");
+          window.location.href = "/sharewani/pages/login";
+        } else {
+          const error = await response.text();
+          alert("❌ Registration failed: " + error);
+        }
+      } catch (err) {
+        alert("❌ Error: " + err.message);
+      }
+    }
+  </script>
 </head>
 <body>
-<h2>Register</h2>
-
-<form action="/sharewani/auth/register" method="post">
-    <label>Name:</label><br>
-    <input type="text" name="name" required><br>
-
-    <label>Email:</label><br>
-    <input type="email" name="email" required><br>
-
-    <label>Password:</label><br>
-    <input type="password" name="password" required><br>
-
-    <label>Phone:</label><br>
-    <input type="text" name="phone" required><br>
-
-    <label>User Type:</label><br>
-    <select name="userType">
+  <h2>Register</h2>
+  <form onsubmit="registerUser(event)">
+    <label>Name: <input type="text" id="name" required></label><br><br>
+    <label>Email: <input type="email" id="email" required></label><br><br>
+    <label>Password: <input type="password" id="password" required></label><br><br>
+    <label>Phone: <input type="text" id="phone"></label><br><br>
+    <label>User Type:
+      <select id="userType">
         <option value="OWNER">Owner</option>
         <option value="TENANT">Tenant</option>
-    </select><br><br>
-
+      </select>
+    </label><br><br>
     <button type="submit">Register</button>
-</form>
-
-<p>Already have an account? <a href="/sharewani/login">Login here</a></p>
+  </form>
 </body>
 </html>

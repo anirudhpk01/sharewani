@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Owner Dashboard</title>
+</head>
+<body>
+    <h1>Owner Dashboard</h1>
+
+    <h2>Your Items</h2>
+    <a href="/sharewani/pages/add-item">Add New Item</a>
+    <ul>
+        <li th:each="item : ${items}">
+            <strong th:text="${item.name}"></strong> - ₹<span th:text="${item.dailyRate}"></span>
+            <p th:text="${item.description}"></p>
+        </li>
+    </ul>
+
+    <h2>Rental Requests</h2>
+    <ul>
+        <li th:each="rental : ${rentals}">
+            <p>Item: <span th:text="${rental.item.name}"></span></p>
+            <p>Tenant: <span th:text="${rental.tenant.name}"></span></p>
+            <p>Status: <span th:text="${rental.status}"></span></p>
+            <form th:action="@{/sharewani/rentals/approve/{id}(id=${rental.id})}" method="post">
+                <button type="submit">Approve</button>
+            </form>
+            <form th:action="@{/sharewani/rentals/reject/{id}(id=${rental.id})}" method="post">
+                <button type="submit">Reject</button>
+            </form>
+        </li>
+    </ul>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Shared Rental</title>
+    <script>
+        async function createSharedRental(event) {
+            event.preventDefault();
+
+            const itemId = document.getElementById("itemId").value;
+            const maxShareCount = document.getElementById("maxShareCount").value;
+            const schedule = document.getElementById("schedule").value;
+            const tenantIds = document.getElementById("tenantIds").value
+                .split(",")
+                .map(id => Number(id.trim()))
+                .filter(id => !isNaN(id));
+
+            const payload = {
+                itemId: Number(itemId),
+                maxShareCount: Number(maxShareCount),
+                schedule: schedule,
+                tenantIds: tenantIds
+            };
+
+            try {
+                const res = await fetch("/sharewani/shared-rentals", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!res.ok) throw new Error("Failed to create shared rental");
+
+                const data = await res.json();
+                alert("✅ Shared rental created! ID: " + data.id);
+            } catch (err) {
+                alert("❌ Error: " + err.message);
+            }
+        }
+
+        async function joinSharedRental(event) {
+            event.preventDefault();
+
+            const sharedRentalId = document.getElementById("joinSharedRentalId").value;
+            const tenantId = document.getElementById("joinTenantId").value;
+
+            try {
+                const res = await fetch(`/sharewani/shared-rentals/${sharedRentalId}/join/${tenantId}`, {
+                    method: "POST"
+                });
+
+                if (!res.ok) throw new Error("Failed to join shared rental");
+
+                const data = await res.json();
+                alert("✅ Successfully joined shared rental! Current members: " + data.tenants.length);
+            } catch (err) {
+                alert("❌ Error: " + err.message);
+            }
+        }
+    </script>
+</head>
+<body>
+    <h1>Shared Rentals</h1>
+
+    <h2>Create Shared Rental</h2>
+    <form onsubmit="createSharedRental(event)">
+        <label>Item ID:</label>
+        <input type="number" id="itemId" required><br><br>
+
+        <label>Max Share Count:</label>
+        <input type="number" id="maxShareCount" min="2" required><br><br>
+
+        <label>Schedule (text):</label>
+        <input type="text" id="schedule"><br><br>
+
+        <label>Initial Tenant IDs (comma-separated, optional):</label>
+        <input type="text" id="tenantIds"><br><br>
+
+        <button type="submit">Create Shared Rental</button>
+    </form>
+
+    <hr>
+
+    <h2>Join Existing Shared Rental</h2>
+    <form onsubmit="joinSharedRental(event)">
+        <label>Shared Rental ID:</label>
+        <input type="number" id="joinSharedRentalId" required><br><br>
+
+        <label>Your Tenant ID:</label>
+        <input type="number" id="joinTenantId" required><br><br>
+
+        <button type="submit">Join Rental</button>
+    </form>
+
+    <br><a href="/sharewani/pages/items">Back to Items</a>
+</body>
+</html>

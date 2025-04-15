@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>My Rentals</title>
+    <script>
+        async function fetchRentals(event) {
+            event.preventDefault();
+            const tenantId = document.getElementById("tenantId").value;
+
+            try {
+                const response = await fetch(`/sharewani/rentals/tenant/${tenantId}`);
+                if (!response.ok) {
+                    throw new Error("Failed to fetch rentals.");
+                }
+
+                const rentals = await response.json();
+                const resultDiv = document.getElementById("result");
+                resultDiv.innerHTML = "";
+
+                if (rentals.length === 0) {
+                    resultDiv.innerHTML = "<p>No rentals found for this tenant.</p>";
+                    return;
+                }
+
+                const table = document.createElement("table");
+                table.border = "1";
+                const header = table.insertRow();
+                header.innerHTML = "<th>ID</th><th>Status</th><th>Item</th><th>Start</th><th>End</th><th>Amount</th>";
+
+                rentals.forEach(r => {
+                    const row = table.insertRow();
+                    row.innerHTML = `
+                        <td>${r.id}</td>
+                        <td>${r.status}</td>
+                        <td>${r.item.name}</td>
+                        <td>${r.startDate}</td>
+                        <td>${r.endDate}</td>
+                        <td>${r.amount}</td>
+                    `;
+                });
+
+                resultDiv.appendChild(table);
+
+            } catch (err) {
+                alert("Error: " + err.message);
+            }
+        }
+    </script>
+</head>
+<body>
+    <h1>View My Rentals</h1>
+
+    <form onsubmit="fetchRentals(event)">
+        <label>Tenant ID:</label>
+        <input type="number" id="tenantId" required>
+        <button type="submit">Get My Rentals</button>
+    </form>
+
+    <br>
+    <div id="result"></div>
+
+    <br><a href="/sharewani/pages/items">Back to Items</a>
+</body>
+</html>

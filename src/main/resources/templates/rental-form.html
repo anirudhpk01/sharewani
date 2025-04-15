@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Request Rental</title>
+    <script>
+        async function submitRental(event) {
+            event.preventDefault();
+
+            const itemId = Number(document.getElementById("itemId").value);
+            const tenantId = Number(document.getElementById("tenantId").value);
+            const startDate = document.getElementById("startDate").value;
+            const endDate = document.getElementById("endDate").value;
+
+            const payload = {
+                itemId: itemId,
+                tenantId: tenantId,
+                startDate: startDate,
+                endDate: endDate
+            };
+
+            try {
+                const res = await fetch("/sharewani/rentals", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!res.ok) {
+                    const errText = await res.text();
+                    throw new Error("Rental failed: " + errText);
+                }
+
+                const data = await res.json();
+                alert("✅ Rental Requested! ID: " + data.id + " — Status: " + data.status);
+            } catch (err) {
+                alert("❌ Error: " + err.message);
+            }
+        }
+    </script>
+</head>
+<body>
+    <h1>Request a Rental</h1>
+
+    <form onsubmit="submitRental(event)">
+        <label>Item ID:</label>
+        <input type="number" id="itemId" required><br><br>
+
+        <label>Tenant ID:</label>
+        <input type="number" id="tenantId" required><br><br>
+
+        <label>Start Date:</label>
+        <input type="date" id="startDate" required><br><br>
+
+        <label>End Date:</label>
+        <input type="date" id="endDate" required><br><br>
+
+        <button type="submit">Submit Rental Request</button>
+    </form>
+
+    <br><a href="/sharewani/pages/items">Back to Items</a>
+</body>
+</html>

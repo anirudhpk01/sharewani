@@ -1,21 +1,59 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html>
 <head>
-    <title>Login - Sharewani</title>
+  <title>Login</title>
+  
 </head>
 <body>
-<h2>Login</h2>
-
-<form action="/sharewani/auth/login" method="post">
-    <label>Email:</label><br>
-    <input type="email" name="email" required><br>
-
-    <label>Password:</label><br>
-    <input type="password" name="password" required><br><br>
-
+  <h2>Login</h2>
+  <form id="loginForm">
+    <label>Email: <input type="email" id="email" required></label><br><br>
+    <label>Password: <input type="password" id="password" required></label><br><br>
     <button type="submit">Login</button>
-</form>
+    <select id="userType" required>
+        <option value="OWNER">Owner</option>
+        <option value="TENANT">Tenant</option>
+      </select>
+  </form>
 
-<p>New user? <a href="/sharewani/register">Register here</a></p>
+  <script>
+    document.getElementById("loginForm").addEventListener("submit", async function (e) {
+      e.preventDefault();
+
+      const email = document.getElementById("email").value;
+      const password = document.getElementById("password").value;
+      const userType = document.getElementById("userType").value;
+
+      try {
+        const response = await fetch("/sharewani/auth/login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ email, password })
+        });
+
+        console.log(response.ok); // Check if response is ok
+        if (response.ok) {
+          const data = await response.json();
+          alert("✅ Login successful!");
+
+          // 👉 Redirect based on selected role
+          if (userType === "OWNER") {
+            window.location.href = "/sharewani/pages/owner-home";
+          } else if (userType === "TENANT") {
+            window.location.href = "/sharewani/pages/tenant-home";
+          }
+        } else {
+          const errorText = await response.text();
+          alert("❌ Login failed: " + errorText);
+        }
+      } catch (error) {
+        console.error("Error:", error);
+        alert("❌ An error occurred during login.");
+      }
+    });
+  </script>
 </body>
+
 </html>
