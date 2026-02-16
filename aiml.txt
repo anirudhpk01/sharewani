@@ -1,0 +1,245 @@
+Ingestion worker .py 
+
+import asyncio
+import json
+from datetime import datetime
+from app.utils.logger import get_logger
+from app.service.aws_redis import AWSRedis
+
+logger = get_logger("IngestionWorker")
+
+
+class IngestionWorker:
+
+    def __init__(self, queue: asyncio.Queue):
+        self.queue = queue
+        self.redis = AWSRedis()
+
+    async def start(self):
+        while True:
+            event = await self.queue.get()
+            try:
+                await self.process_event(event)
+            except Exception as e:
+                logger.error(f"Processing error: {e}")
+            finally:
+                self.queue.task_done()
+
+    async def process_event(self, event):
+
+        document = event.get("fullDocument")
+        if not document:
+            return
+
+        conversation_id = document.get("conversationId")
+        organization = document.get("organization")
+
+        if not conversation_id or not organization:
+            return
+
+        org_upper = organization.upper()
+
+        # --------------------------
+        # Direct fields
+        # --------------------------
+
+        market = document.get("market")
+        region = document.get("region")
+        conversation_type = document.get("conversation_type")
+        created_dt = document.get("createdDateTime")
+        last_modified_dt = document.get("lastModifiedDateTime")
+
+        # --------------------------
+        # Closed indicator
+        # --------------------------
+
+        conversation_status = document.get("conversationStatus", [])
+
+        is_closed = any(
+            status.get("status") == "CLOSED"
+            for status in conversation_status
+            if isinstance(status, dict)
+        )
+
+        conversation_closed_ind = 1 if is_closed else 0
+
+        def has_closed_or_transferred():
+            return any(
+                status.get("status") in ["CLOSED", "TRANSFERRED"]
+                for status in conversation_status
+                if isinstance(status, dict)
+            )
+
+        closed_or_transferred = has_closed_or_transferred()
+
+        # --------------------------
+        # Org flags
+        # --------------------------
+
+        bot_flag = org_upper in ["SIERRA", "BOT"]
+        ivr_flag = org_upper == "IVR"
+        genesys_flag = org_upper == "GENESYS"
+
+        bot_in_progress = 1 if bot_flag and not closed_or_transferred else 0
+        ivr_in_progress = 1 if ivr_flag and not closed_or_transferred else 0
+        genesys_in_progress = 1 if genesys_flag and not closed_or_transferred else 0
+
+        bot_closed = 1 if bot_flag and closed_or_transferred else 0
+        ivr_closed = 1 if ivr_flag and closed_or_transferred else 0
+        genesys_closed = 1 if genesys_flag and closed_or_transferred else 0
+
+        # --------------------------
+        # Handling time
+        # --------------------------
+
+        conv_handling_time = None
+
+        if created_dt and last_modified_dt:
+            try:
+                created = datetime.fromisoformat(created_dt)
+                modified = datetime.fromisoformat(last_modified_dt)
+                conv_handling_time = (modified - created).total_seconds()
+            except Exception:
+                pass
+
+        # --------------------------
+        # Transfer logic
+        # --------------------------
+
+        bot_to_agent_transfer = 0
+        bot_to_ivr_transfer = 0
+
+        if org_upper in ["VOL", "CBOL"]:
+            channel_list = document.get("channel", [])
+
+            sequence = [
+                item.get("name", "").upper()
+                for item in channel_list
+                if isinstance(item, dict)
+            ]
+
+            if any(x in sequence for x in ["BOT", "SIERRA"]):
+                if "GENESYS" in sequence:
+                    bot_to_agent_transfer = 1
+                if "IVR" in sequence:
+                    bot_to_ivr_transfer = 1
+
+        # --------------------------
+        # Local object
+        # --------------------------
+
+        local_object = {
+            "conversationId": conversation_id,
+            "market": market,
+            "region": region,
+            "conversation_type": conversation_type,
+            "created_date_time": created_dt,
+            "conversation_closed_ind": conversation_closed_ind,
+            "bot_in_progress": bot_in_progress,
+            "ivr_in_progress": ivr_in_progress,
+            "genesys_in_progress": genesys_in_progress,
+            "bot_closed": bot_closed,
+            "ivr_closed": ivr_closed,
+            "genesys_closed": genesys_closed,
+            "conv_handling_time": conv_handling_time
+        }
+
+        await self.redis.process_metrics(
+            conversation_id,
+            local_object,
+            conversation_closed_ind,
+            bot_in_progress,
+            ivr_in_progress,
+            genesys_in_progress,
+            bot_closed,
+            ivr_closed,
+            genesys_closed,
+            conv_handling_time,
+            org_upper,
+            bot_to_agent_transfer,
+            bot_to_ivr_transfer
+        )
+
+        resume_token = event.get("_id")
+        if resume_token:
+            await self.redis.save_resume_token(str(resume_token))
+
+
+
+
+AWS redis .py
+
+import json
+from app.utils.config import Config
+
+    async def process_metrics(
+        self,
+        conversation_id,
+        local_object,
+        conversation_closed_ind,
+        bot_in_progress,
+        ivr_in_progress,
+        genesys_in_progress,
+        bot_closed,
+        ivr_closed,
+        genesys_closed,
+        conv_handling_time,
+        org_upper,
+        bot_to_agent_transfer,
+        bot_to_ivr_transfer
+    ):
+
+        conv_key = self.conv_key(conversation_id)
+
+        pipe = self.client.pipeline()
+
+        # ---------------- Local storage ----------------
+        pipe.rpush(conv_key, json.dumps(local_object))
+        pipe.expire(conv_key, Config.TTL_SECONDS)
+
+        # ---------------- Live conversations ----------------
+        if conversation_closed_ind == 0:
+            pipe.incr(self._apply_prefix("current_live_conversations"))
+        else:
+            pipe.decr(self._apply_prefix("current_live_conversations"))
+
+        # ---------------- Progress ----------------
+        pipe.incrby(self._apply_prefix("total_bot_in_progress"), bot_in_progress)
+        pipe.incrby(self._apply_prefix("total_ivr_in_progress"), ivr_in_progress)
+        pipe.incrby(self._apply_prefix("total_genesys_in_progress"), genesys_in_progress)
+
+        pipe.incrby(self._apply_prefix("total_bot_closed"), bot_closed)
+        pipe.incrby(self._apply_prefix("total_ivr_closed"), ivr_closed)
+        pipe.incrby(self._apply_prefix("total_genesys_closed"), genesys_closed)
+
+        # ---------------- Transfers ----------------
+        pipe.incrby(self._apply_prefix("bot_to_agent_transfer"), bot_to_agent_transfer)
+        pipe.incrby(self._apply_prefix("bot_to_ivr_transfer"), bot_to_ivr_transfer)
+
+        # ---------------- Handling Time ----------------
+
+        if conv_handling_time is not None:
+
+            # Overall (VOL / CBOL only)
+            if org_upper in ["VOL", "CBOL"]:
+                pipe.incrbyfloat(self._apply_prefix("total_handling_time_sum"), conv_handling_time)
+                pipe.incr(self._apply_prefix("total_handling_time_count"))
+
+            # IVR
+            if org_upper == "IVR":
+                pipe.incrbyfloat(self._apply_prefix("ivr_handling_time_sum"), conv_handling_time)
+                pipe.incr(self._apply_prefix("ivr_handling_time_count"))
+
+            # BOT / SIERRA
+            if org_upper in ["BOT", "SIERRA"]:
+                pipe.incrbyfloat(self._apply_prefix("bot_handling_time_sum"), conv_handling_time)
+                pipe.incr(self._apply_prefix("bot_handling_time_count"))
+
+            # GENESYS
+            if org_upper == "GENESYS":
+                pipe.incrbyfloat(self._apply_prefix("genesys_handling_time_sum"), conv_handling_time)
+                pipe.incr(self._apply_prefix("genesys_handling_time_count"))
+
+        await pipe.execute()
+
+
