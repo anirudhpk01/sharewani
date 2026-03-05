@@ -1,0 +1,144 @@
+CBOL
+Json
+Copy code
+{
+  "conversationId": "UUID",
+  "customerId": "NOT_VERIFIED",
+  "name": "CBOL",
+  "channel": "CHATBOT | customer",
+  "conversationType": "CHAT",
+  "market": "UK_RB",
+  "organization": "CBOL",
+
+  "conversationStatus": [
+    { "ACTIVE": "<datetime>" },
+    { "INPROGRESS": "<datetime>" },
+    { "CLOSED": "<datetime>" }
+  ],
+
+  "interactionStatus": [
+    { "INITIATED": "<datetime>" },
+    { "TRANSFERRED": "<datetime>" },
+    { "CLOSED": "<datetime>" }
+  ],
+
+  "region": "EMEA",
+
+  "verifier": {
+    "verifierName": "CBOL_UK_RM"
+  },
+
+  "eventContext": {
+    "data_key": "data_value",
+    "recordTime": "<timestamp>"
+  },
+
+  "verificationFlag": {
+    "data_key": "data_value",
+    "recordTime": "<timestamp>"
+  }
+}
+AI BOT
+Json
+Copy code
+{
+  "conversationId": "UUID",
+  "customerId": "NOT_VERIFIED",
+  "name": "UK_RM",
+  "channel": "CHATBOT",
+  "conversationType": "VOICE",
+  "market": "UK_RB",
+  "organization": "CHATBOT",
+
+  "conversationStatus": [
+    { "ACTIVE": "<datetime>" },
+    { "INPROGRESS": "<datetime>" },
+    { "TRANSFERRED": "<datetime>" }
+  ],
+
+  "interactionStatus": [
+    { "CONNECTED": "<datetime>" },
+    { "INPROGRESS": "<datetime>" },
+    { "TRANSFERRED": "<datetime>" }
+  ],
+
+  "region": "EMEA",
+
+  "sentiment": [
+    { "positive": 0.65 },
+    { "neutral": 0.25 },
+    { "negative": 0.10 }
+  ],
+
+  "intent": [
+    { "balance_enquiry": 0.7 },
+    { "card_issue": 0.2 },
+    { "general_query": 0.1 }
+  ],
+
+  "verifier": {
+    "verifierName": "CHATBOT-UK_RM"
+  },
+
+  "eventContext": {
+    "data_key": "data_value",
+    "recordTime": "<timestamp>"
+  },
+
+  "verificationFlag": {
+    "data_key": "data_value",
+    "recordTime": "<timestamp>"
+  }
+}
+GENESYS
+Json
+Copy code
+{
+  "conversationId": "UUID",
+  "customerId": "NOT_VERIFIED",
+  "name": "UK_RM",
+  "channel": "CHATAGENTCLOUD",
+  "conversationType": "VOICE",
+  "market": "UK_RB",
+  "organization": "CHATAGENTCLOUD",
+
+  "conversationStatus": [
+    { "TRANSFERRED": "<datetime>" },
+    { "INPROGRESS": "<datetime>" },
+    { "CLOSED": "<datetime>" }
+  ],
+
+  "interactionStatus": [
+    { "CONNECTED": "<datetime>" },
+    { "INPROGRESS": "<datetime>" },
+    { "CLOSED": "<datetime>" }
+  ],
+
+  "region": "EMEA",
+
+  "sentiment": [
+    { "positive": 0.55 },
+    { "neutral": 0.30 },
+    { "negative": 0.15 }
+  ],
+
+  "intent": [
+    { "complaint": 0.5 },
+    { "account_help": 0.3 },
+    { "general_query": 0.2 }
+  ],
+
+  "verifier": {
+    "verifierName": "CHATAGENTCLOUD-UK_RM"
+  },
+
+  "eventContext": {
+    "data_key": "data_value",
+    "recordTime": "<timestamp>"
+  },
+
+  "verificationFlag": {
+    "data_key": "data_value",
+    "recordTime": "<timestamp>"
+  }
+}
