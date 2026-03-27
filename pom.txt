@@ -1,113 +1,181 @@
-async def get_all_with_prefix(
-        self,
-        prefix: str,
-        *,
-        extend_ttl_seconds: int | None = None,
-        delete_after: bool = False,
-        raise_on_error: bool = False,
-    ) -> dict:
-        read_timeout = float(os.getenv("REDIS_READ_TOTAL_TIMEOUT_SECONDS", "8"))
-        try:
-            return await asyncio.wait_for(
-                self._get_all_with_prefix_inner(
-                    prefix,
-                    extend_ttl_seconds=extend_ttl_seconds,
-                    delete_after=delete_after,
-                    raise_on_error=raise_on_error,
-                ),
-                timeout=read_timeout,
-            )
-        except asyncio.TimeoutError:
-            logger.error(
-                "get_all_with_prefix timed out after %.1fs for prefix %s",
-                read_timeout,
-                prefix,
-            )
-            if raise_on_error:
-                raise
-            return {}
+import os
+import json
+import yaml
+import certifi
+import boto3
+from dotenv import load_dotenv
+from botocore.exceptions import ClientError
+from threading import RLock
+from copy import deepcopy
 
-    async def _get_all_with_prefix_inner(
-        self,
-        prefix: str,
-        *,
-        extend_ttl_seconds: int | None = None,
-        delete_after: bool = False,
-        raise_on_error: bool = False,
-    ) -> dict:
-        """Inner implementation of get_all_with_prefix — wrapped with timeout by caller."""
-        p = self._build_prefix(prefix)
-        pattern = p + "*"
-        scan_count = max(1, _env_int("REDIS_SCAN_COUNT", 200))
-        fetch_chunk_size = max(1, _env_int("REDIS_FETCH_CHUNK_SIZE", 200))
+load_dotenv()
 
-        try:
-            keys = []
-            async for k in self._client.scan_iter(match=pattern, count=scan_count):
-                keys.append(k)
-
-            if not keys:
-                return {}
-
-            if extend_ttl_seconds and extend_ttl_seconds > 0:
-                await self._expire_keys_in_chunks(self._client, keys, int(extend_ttl_seconds), fetch_chunk_size)
-
-            result = {}
-            for start in range(0, len(keys), fetch_chunk_size):
-                key_chunk = keys[start : start + fetch_chunk_size]
-                vals = await self._client.mget(*key_chunk)
-                for k, v in zip(key_chunk, vals):
-                    try:
-                        parsed = json.loads(v) if v is not None else None
-                    except Exception:
-                        parsed = v
-                    result[k] = parsed
-
-            if delete_after:
-                try:
-                    for start in range(0, len(keys), fetch_chunk_size):
-                        await self._client.delete(*keys[start : start + fetch_chunk_size])
-                except AuthenticationError:
-                    for start in range(0, len(keys), fetch_chunk_size):
-                        await self._client.delete(*keys[start : start + fetch_chunk_size])
-
-            return result
-        except Exception as e:
-            logger.error(f"Failed to fetch keys with prefix {p}: {e}")
-            if raise_on_error:
-                raise
-            return {}
+# -----------------------------
+# CACHE (prevents random failures + reduces AWS calls)
+# -----------------------------
+_cache = {}
+_lock = RLock()
 
 
-and then ,
-connectionpool change:
-
-if writes:
-                    # Write all completed conversation aggregates to Redis in one batch.
-                    try:
-                        await redis_client.write_interactions_batch(writes, key_prefix=redis_prefix)
-                    except Exception as wb_exc:
-                        await _log(
-                            logger.error if logger else None,
-                            f"CDC batch Redis write failed for {len(writes)} conversation(s): {wb_exc}",
-                        )
+def _cache_enabled():
+    return os.getenv("ENABLE_RUNTIME_CONFIG_CACHE", "true").lower() in {"1", "true", "yes"}
 
 
-and then, get conversations change:
+def _get_cache(key):
+    with _lock:
+        return deepcopy(_cache.get(key))
 
-data = None
-    warning = None
-    read_timeout = float(os.getenv("CONVERSATIONS_READ_TIMEOUT_SECONDS", "9"))
+
+def _set_cache(key, value):
+    with _lock:
+        _cache[key] = deepcopy(value)
+    return value
+
+
+def _get_or_build(key, builder):
+    if not _cache_enabled():
+        return builder()
+
+    cached = _get_cache(key)
+    if cached:
+        return cached
+
+    return _set_cache(key, builder())
+
+
+# -----------------------------
+# AWS HELPERS
+# -----------------------------
+def get_aws_region():
+    region = os.getenv("AWS_REGION")
+    if not region or not region.strip():
+        raise RuntimeError("AWS_REGION is missing")
+    return region.strip()
+
+
+def get_secret(secret_name: str) -> dict:
+    """
+    Always returns parsed JSON dict
+    """
+    session = boto3.session.Session()
+    client = session.client("secretsmanager", region_name=get_aws_region())
+
     try:
-        data = await asyncio.wait_for(
-            client.get_all_with_prefix(normalized_prefix, raise_on_error=True),
-            timeout=read_timeout,
+        response = client.get_secret_value(SecretId=secret_name)
+        secret_str = response.get("SecretString")
+
+        if not secret_str:
+            raise RuntimeError(f"No SecretString for {secret_name}")
+
+        return json.loads(secret_str)
+
+    except ClientError as e:
+        raise RuntimeError(f"Failed to fetch secret {secret_name}") from e
+
+
+# -----------------------------
+# CONFIG READER
+# -----------------------------
+class ConfigReader:
+    def __init__(self, config_file_path="app/utils/database.yaml"):
+        self.config_file_path = config_file_path
+
+    def _load_yaml(self):
+        with open(self.config_file_path, "r") as f:
+            return yaml.safe_load(f)
+
+    # -----------------------------
+    # MONGO
+    # -----------------------------
+    def build_mongo_uri(self, username, password, host, port, config, db_name, ca):
+        base_uri = config["mongodb"]["uri"]
+        params = config["mongodb"]["param"]
+
+        uri = base_uri.format(
+            username=username,
+            mongo_auth=password,
+            host=host,
+            port=port
         )
-    except asyncio.TimeoutError:
-        warning = f"Redis read timed out after {read_timeout}s; returning empty result"
-        await logger.error(warning)
-        data = {}
-    except Exception as exc:
-        warning = f"Redis read failed or was incomplete: {exc}"
-        await logger.error(warning)
-        data = {}
+
+        query = params.format(
+            ca_file=ca,
+            database_name=db_name
+        )
+
+        return uri + query
+
+    def get_mongo_config(self):
+        def builder():
+            config = self._load_yaml()
+            ca = certifi.where()
+
+            if os.name == "nt":
+                username = os.getenv("MONGODB_USERNAME")
+                password = os.getenv("MONGODB_PASSWORD")
+                host = os.getenv("MONGODB_HOST")
+                port = os.getenv("MONGODB_PORT")
+                db = os.getenv("MONGODB_DBNAME", "default")
+            else:
+                run_env = os.getenv("RUN_ENV")
+                secret = get_secret(f"ods/{run_env}/mongodb")
+
+                username = secret.get("username")
+                password = secret.get("password")
+                host = secret.get("host")
+                port = secret.get("port")
+                db = secret.get("database")
+
+            return {
+                "uri": self.build_mongo_uri(username, password, host, port, config, db, ca),
+                "database_name": db,
+                "max_pool_size": config["mongodb"]["max_pool_size"],
+                "min_pool_size": config["mongodb"]["min_pool_size"],
+                "idle_timeout_ms": config["mongodb"]["idle_timeout_ms"],
+                "write_concern": config["mongodb"]["write_concern"],
+            }
+
+        return _get_or_build(("mongo", os.getenv("RUN_ENV")), builder)
+
+    # -----------------------------
+    # REDIS
+    # -----------------------------
+    def get_redis_config(self):
+        def builder():
+            config = self._load_yaml()
+
+            if os.name == "nt":
+                return {
+                    "host": os.getenv("REDIS_HOST"),
+                    "port": os.getenv("REDIS_PORT"),
+                    "username": os.getenv("REDIS_USERNAME"),
+                    "password": os.getenv("REDIS_PASSWORD"),
+                    "key": os.getenv("REDIS_KEY"),
+                }
+
+            run_env = os.getenv("RUN_ENV")
+            secret = get_secret(f"ods/{run_env}/redis")
+
+            return {
+                "host": secret.get("host"),
+                "port": secret.get("port"),
+                "username": secret.get("username"),
+                "password": secret.get("password"),
+                "key": secret.get("key"),
+            }
+
+        return _get_or_build(("redis", os.getenv("RUN_ENV")), builder)
+
+    # -----------------------------
+    # SERVICE URL
+    # -----------------------------
+    def get_service_url(self):
+        def builder():
+            if os.name == "nt":
+                return os.getenv("ODS_URL")
+
+            run_env = os.getenv("RUN_ENV")
+            secret = get_secret(f"ods/{run_env}/url")
+            return secret.get("ods_url_host")
+
+        return _get_or_build(("url", os.getenv("RUN_ENV")), builder)
