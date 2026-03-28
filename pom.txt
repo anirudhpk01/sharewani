@@ -1,181 +1,245 @@
+import certifi
+import yaml
 import os
 import json
-import yaml
-import certifi
+import logging
 import boto3
+
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError
-from threading import RLock
-from copy import deepcopy
-
-load_dotenv()
-
-# -----------------------------
-# CACHE (prevents random failures + reduces AWS calls)
-# -----------------------------
-_cache = {}
-_lock = RLock()
+from fastapi import Request
 
 
-def _cache_enabled():
-    return os.getenv("ENABLE_RUNTIME_CONFIG_CACHE", "true").lower() in {"1", "true", "yes"}
+# ---------------------------------------------------------------------------
+# OS helper — extracted so tests can monkeypatch without mutating os.name
+# ---------------------------------------------------------------------------
+
+def is_windows() -> bool:
+    """Return True when running on Windows."""
+    return os.name == 'nt'
 
 
-def _get_cache(key):
-    with _lock:
-        return deepcopy(_cache.get(key))
+# ---------------------------------------------------------------------------
+# Request helper
+# ---------------------------------------------------------------------------
+
+def get_logger_from_request(request: Request):
+    return request.app.state.logger
 
 
-def _set_cache(key, value):
-    with _lock:
-        _cache[key] = deepcopy(value)
-    return value
+# ---------------------------------------------------------------------------
+# AWS region helper
+# ---------------------------------------------------------------------------
 
-
-def _get_or_build(key, builder):
-    if not _cache_enabled():
-        return builder()
-
-    cached = _get_cache(key)
-    if cached:
-        return cached
-
-    return _set_cache(key, builder())
-
-
-# -----------------------------
-# AWS HELPERS
-# -----------------------------
-def get_aws_region():
-    region = os.getenv("AWS_REGION")
-    if not region or not region.strip():
-        raise RuntimeError("AWS_REGION is missing")
-    return region.strip()
-
-
-def get_secret(secret_name: str) -> dict:
+def get_aws_region_with_fallback() -> str:
     """
-    Always returns parsed JSON dict
+    Return the AWS region from the environment.
+    Logs an error and returns an empty string if the variable is missing or blank,
+    so callers get a predictable type rather than None.
+    """
+    region_name = os.getenv("AWS_REGION")
+    if not region_name or not str(region_name).strip():
+        logging.error("AWS_REGION is missing or blank.")
+        return ""
+    return str(region_name).strip()
+
+
+# ---------------------------------------------------------------------------
+# Core secret-fetching helper
+# ---------------------------------------------------------------------------
+
+def get_secret(secret_name: str, region_name: str) -> dict:
+    """
+    Fetch a secret from AWS Secrets Manager and always return a dict.
+
+    Previously the function returned different types (tuple / str / dict)
+    depending on the secret name, which caused intermittent failures when the
+    caller received an unexpected type.  Now it always parses the SecretString
+    as JSON and returns the raw dict so each caller can extract the keys it
+    needs itself.
+
+    Raises ClientError on AWS failures so the caller can decide how to handle
+    the error rather than swallowing it silently.
     """
     session = boto3.session.Session()
-    client = session.client("secretsmanager", region_name=get_aws_region())
-
+    client = session.client(
+        service_name='secretsmanager',
+        region_name=region_name,
+    )
     try:
-        response = client.get_secret_value(SecretId=secret_name)
-        secret_str = response.get("SecretString")
+        secret_string = client.get_secret_value(SecretId=secret_name).get('SecretString')
+        if isinstance(secret_string, str):
+            secret_string = json.loads(secret_string)
+        if not isinstance(secret_string, dict):
+            raise ValueError(
+                f"Secret '{secret_name}' did not deserialise to a dict "
+                f"(got {type(secret_string).__name__}). Check the secret format in AWS."
+            )
+        return secret_string
+    except ClientError:
+        logging.exception(
+            "Error fetching secret '%s' from Secrets Manager (region=%s)",
+            secret_name,
+            region_name,
+        )
+        raise
 
-        if not secret_str:
-            raise RuntimeError(f"No SecretString for {secret_name}")
 
-        return json.loads(secret_str)
+# ---------------------------------------------------------------------------
+# ConfigReader
+# ---------------------------------------------------------------------------
 
-    except ClientError as e:
-        raise RuntimeError(f"Failed to fetch secret {secret_name}") from e
-
-
-# -----------------------------
-# CONFIG READER
-# -----------------------------
 class ConfigReader:
-    def __init__(self, config_file_path="app/utils/database.yaml"):
+    """
+    Reads database/service configuration from a YAML file, injecting
+    credentials from environment variables (Windows / local dev) or
+    AWS Secrets Manager (all other environments).
+    """
+
+    def __init__(self, config_file_path: str = "app/utils/database.yaml"):
         self.config_file_path = config_file_path
+        load_dotenv()
 
-    def _load_yaml(self):
-        with open(self.config_file_path, "r") as f:
-            return yaml.safe_load(f)
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
-    # -----------------------------
-    # MONGO
-    # -----------------------------
-    def build_mongo_uri(self, username, password, host, port, config, db_name, ca):
-        base_uri = config["mongodb"]["uri"]
-        params = config["mongodb"]["param"]
+    def _load_yaml(self) -> dict:
+        with open(self.config_file_path, 'r') as fh:
+            return yaml.safe_load(fh) or {}
 
-        uri = base_uri.format(
-            username=username,
-            mongo_auth=password,
-            host=host,
-            port=port
+    def _get_run_env(self) -> str:
+        return os.getenv("RUN_ENV", "")
+
+    def _get_region(self) -> str:
+        return get_aws_region_with_fallback()
+
+    # ------------------------------------------------------------------
+    # MongoDB
+    # ------------------------------------------------------------------
+
+    def build_mongo_uri(self, username, mongo_auth, host, port, config, ca, db_name) -> str:
+        """
+        Assemble a MongoDB connection URI.
+        Credentials are injected at runtime and never logged or written to disk.
+        """
+        base_uri = config['mongodb']['uri']
+        param    = config['mongodb']['param']
+
+        # Normalise CA path for Windows (keeps URI parseable)
+        ca_normalised = ca.replace("\\", "/") if ca else None
+
+        uri   = base_uri.format(username=username, mongo_auth=mongo_auth, host=host, port=port)
+        query = param.format(ca_file=ca_normalised or "", database_name=db_name)
+
+        allow_invalid = (
+            os.environ.get("TLS_ALLOW_INVALID_CERTS", "false").strip().lower()
+            in {"1", "true", "yes"}
         )
 
-        query = params.format(
-            ca_file=ca,
-            database_name=db_name
-        )
+        if allow_invalid:
+            sep   = "&" if query else "?"
+            query = f"{query}{sep}tlsAllowInvalidCertificates=true"
+        elif ca_normalised and os.path.isfile(ca):
+            if "tlsCAFile" not in query:
+                sep   = "&" if query and query.startswith("?") else ""
+                query = f"{query}{sep}tlsCAFile={ca_normalised}"
 
         return uri + query
 
-    def get_mongo_config(self):
-        def builder():
-            config = self._load_yaml()
-            ca = certifi.where()
+    def get_mongo_config(self) -> dict:
+        """
+        Return MongoDB connection config.
+        Credentials come from env vars on Windows, Secrets Manager elsewhere.
+        """
+        config = self._load_yaml()
 
-            if os.name == "nt":
-                username = os.getenv("MONGODB_USERNAME")
-                password = os.getenv("MONGODB_PASSWORD")
-                host = os.getenv("MONGODB_HOST")
-                port = os.getenv("MONGODB_PORT")
-                db = os.getenv("MONGODB_DBNAME", "default")
-            else:
-                run_env = os.getenv("RUN_ENV")
-                secret = get_secret(f"ods/{run_env}/mongodb")
+        # Prefer an explicit cert path if provided (set during app lifespan)
+        ca_env = os.environ.get("TLS_CA_FILE") or os.environ.get("CERT_PATH")
+        ca     = ca_env if ca_env and os.path.isfile(ca_env) else certifi.where()
 
-                username = secret.get("username")
-                password = secret.get("password")
-                host = secret.get("host")
-                port = secret.get("port")
-                db = secret.get("database")
+        username   = ''
+        mongo_auth = ''
+        host       = ''
+        port       = ''
+        db_name    = ''
 
-            return {
-                "uri": self.build_mongo_uri(username, password, host, port, config, db, ca),
-                "database_name": db,
-                "max_pool_size": config["mongodb"]["max_pool_size"],
-                "min_pool_size": config["mongodb"]["min_pool_size"],
-                "idle_timeout_ms": config["mongodb"]["idle_timeout_ms"],
-                "write_concern": config["mongodb"]["write_concern"],
-            }
+        if is_windows():
+            username   = os.environ.get("MONGODB_USERNAME", "")
+            mongo_auth = os.environ.get("MONGODB_PASSWORD", "")
+            host       = os.environ.get("MONGODB_HOST", "")
+            port       = os.environ.get("MONGODB_PORT", "")
+            db_name    = os.environ.get("MONGODB_DBNAME", "ccaas")
 
-        return _get_or_build(("mongo", os.getenv("RUN_ENV")), builder)
+        elif 'mongodb' in config:
+            secret_name = f"ods/{self._get_run_env()}/mongodb"
+            secret      = get_secret(secret_name, self._get_region())
+            username    = secret.get('username', '')
+            mongo_auth  = secret.get('password', '')
+            host        = secret.get('host', '')
+            port        = secret.get('port', '')
+            db_name     = secret.get('database', '')
 
-    # -----------------------------
-    # REDIS
-    # -----------------------------
-    def get_redis_config(self):
-        def builder():
-            config = self._load_yaml()
+        mongo_config = {}
+        if 'mongodb' in config:
+            mongo_config['uri']            = self.build_mongo_uri(username, mongo_auth, host, port, config, ca, db_name)
+            mongo_config['database_name']  = db_name
+            mongo_config['max_pool_size']  = config['mongodb']['max_pool_size']
+            mongo_config['min_pool_size']  = config['mongodb']['min_pool_size']
+            mongo_config['idle_timeout_ms']= config['mongodb']['idle_timeout_ms']
+            mongo_config['write_concern']  = config['mongodb']['write_concern']
 
-            if os.name == "nt":
-                return {
-                    "host": os.getenv("REDIS_HOST"),
-                    "port": os.getenv("REDIS_PORT"),
-                    "username": os.getenv("REDIS_USERNAME"),
-                    "password": os.getenv("REDIS_PASSWORD"),
-                    "key": os.getenv("REDIS_KEY"),
-                }
+        return mongo_config
 
-            run_env = os.getenv("RUN_ENV")
-            secret = get_secret(f"ods/{run_env}/redis")
+    # ------------------------------------------------------------------
+    # Redis
+    # ------------------------------------------------------------------
 
-            return {
-                "host": secret.get("host"),
-                "port": secret.get("port"),
-                "username": secret.get("username"),
-                "password": secret.get("password"),
-                "key": secret.get("key"),
-            }
+    def get_redis_config(self) -> dict:
+        """
+        Return Redis connection config.
+        Credentials come from env vars on Windows, Secrets Manager elsewhere.
+        """
+        config = self._load_yaml()
 
-        return _get_or_build(("redis", os.getenv("RUN_ENV")), builder)
+        username   = ''
+        redis_auth = ''
+        host       = ''
+        port       = ''
+        key        = ''
 
-    # -----------------------------
-    # SERVICE URL
-    # -----------------------------
-    def get_service_url(self):
-        def builder():
-            if os.name == "nt":
-                return os.getenv("ODS_URL")
+        if is_windows():
+            username   = os.environ.get("REDIS_USERNAME", "")
+            redis_auth = os.environ.get("REDIS_PASSWORD", "")
+            host       = os.environ.get("REDIS_HOST", "")
+            port       = os.environ.get("REDIS_PORT", "")
+            key        = os.environ.get("REDIS_KEY", "")
 
-            run_env = os.getenv("RUN_ENV")
-            secret = get_secret(f"ods/{run_env}/url")
-            return secret.get("ods_url_host")
+        elif 'redis' in config:
+            secret_name = f"ods/{self._get_run_env()}/redis"
+            secret      = get_secret(secret_name, self._get_region())
+            host        = secret.get('host', '')
+            port        = secret.get('port', '')
+            username    = secret.get('username', '')
+            redis_auth  = secret.get('password', '')
+            key         = secret.get('key', '')
 
-        return _get_or_build(("url", os.getenv("RUN_ENV")), builder)
+        redis_config = {}
+        if 'redis' in config:
+            redis_config['username']   = username
+            redis_config['redis_auth'] = redis_auth
+            redis_config['host']       = host
+            redis_config['port']       = port
+            redis_config['key']        = key
+
+        return redis_config
+
+    # ------------------------------------------------------------------
+    # Service URLs
+    # ------------------------------------------------------------------
+
+    def get_service_config(self) -> str:
+        """Return the ODS service host URL from Secrets Manager."""
+        secret_name = f"ods/{self._get_run_env()}/url"
+        secret      = get_secret(secret_name, self._get_region())
+        return secret.get('ods_url_host', '')
