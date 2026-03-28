@@ -1,4 +1,24 @@
-Hey team, need a quick infra fix — our ECS tasks can't reach ElastiCache Redis in DEV/UAT/SIT. Code and credentials are confirmed fine, it's a security group gap. Need TCP port 16379 open outbound from ECS task SG and inbound on ElastiCache SG for all 3 envs. Can someone pick this up?
+async def process_batch(batch: set[str]):
+    CDC_PROCESS_CHUNK_SIZE = int(os.getenv("CDC_PROCESS_CHUNK_SIZE", "200"))
+    batch_list = list(batch)
+    
+    for i in range(0, len(batch_list), CDC_PROCESS_CHUNK_SIZE):
+        chunk = set(batch_list[i:i + CDC_PROCESS_CHUNK_SIZE])
+        
+        docs_by_cid = await cls.get_documents_grouped_by_conversation_ids(
+            request_proxy, target_db, collectionname, list(chunk),
+        )
+        existing_by_cid = await redis_client.get_interactions_batch(
+            list(chunk), key_prefix=redis_prefix
+        )
+        writes: dict[str, dict] = {}
 
+        async def handle(cid: str):
+            # unchanged
+            ...
 
-Hey, checked the code thoroughly — refactored the secret manager, fixed a port type bug (was coming in as string from Secrets Manager), added logs to confirm credentials and host are loading correctly in deployed. All three envs are pulling the right ElastiCache endpoint with correct creds and SSL. It's a security group issue on the infra side, ECS tasks don't have outbound access to ElastiCache on port 16379. Raised it with the infra team.
+        tasks = [asyncio.create_task(handle(cid)) for cid in chunk]
+        if tasks:
+            await asyncio.gather(*tasks)
+        if writes:
+            await redis_client.write_interactions_batch(writes, key_prefix=redis_prefix)
