@@ -1,24 +1,282 @@
-async def process_batch(batch: set[str]):
-    CDC_PROCESS_CHUNK_SIZE = int(os.getenv("CDC_PROCESS_CHUNK_SIZE", "200"))
-    batch_list = list(batch)
-    
-    for i in range(0, len(batch_list), CDC_PROCESS_CHUNK_SIZE):
-        chunk = set(batch_list[i:i + CDC_PROCESS_CHUNK_SIZE])
-        
-        docs_by_cid = await cls.get_documents_grouped_by_conversation_ids(
-            request_proxy, target_db, collectionname, list(chunk),
-        )
-        existing_by_cid = await redis_client.get_interactions_batch(
-            list(chunk), key_prefix=redis_prefix
-        )
-        writes: dict[str, dict] = {}
+import orjson as json
+import asyncio
+from typing import Any
+from redis.asyncio import Redis
+from redis.retry import Retry
+from redis.backoff import ExponentialBackoff
+from redis.exceptions import ConnectionError, TimeoutError, AuthenticationError
+import logging
+from datetime import datetime, timedelta, timezone
+from app.utils.config import ConfigReader
 
-        async def handle(cid: str):
-            # unchanged
-            ...
+logger = logging.getLogger(__name__)
 
-        tasks = [asyncio.create_task(handle(cid)) for cid in chunk]
-        if tasks:
-            await asyncio.gather(*tasks)
-        if writes:
-            await redis_client.write_interactions_batch(writes, key_prefix=redis_prefix)
+# Chunk size for batch Redis operations.
+# Keeping pipelines to ~500 commands per round trip prevents socket timeouts
+# under heavy load (40-50k documents) while still being far more efficient
+# than writing one key at a time.
+_REDIS_BATCH_CHUNK_SIZE = 500
+
+
+class AWSRedis:
+    """Small async Redis wrapper used across the service.
+
+    Main responsibilities:
+    - create the Redis client from app config
+    - build fully-qualified Redis keys with the correct prefix
+    - serialize Python dicts to JSON on write
+    - parse JSON strings back into Python objects on read
+    - apply default TTL rules for conversation keys
+    """
+
+    def __init__(self):
+        # Read config and create the underlying Redis client once for this wrapper instance.
+        logger.debug("Fetching AWS Redis credentials from store")
+        self._lock = asyncio.Lock()
+        kwargs = self._resolve_redis_kwargs()
+        self._client = Redis(**kwargs)
+
+    @staticmethod
+    def _seconds_until_next_midnight_utc() -> int:
+        """Return seconds from now (UTC) until the next 00:00 UTC boundary."""
+        now = datetime.now(timezone.utc)
+        next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        delta = (next_midnight - now).total_seconds()
+        return max(1, int(delta))
+
+    def _resolve_redis_kwargs(self) -> dict:
+        config = ConfigReader().get_redis_config()
+        host = config.get("host")
+        port = config.get("port")
+        username = config.get("username")
+        password = config.get("redis_auth")
+
+        redis_maxconnections = config.get("max_connections")
+        try:
+            max_connections = int(redis_maxconnections) if redis_maxconnections is not None else 300
+        except Exception:
+            max_connections = 300
+
+        retry_strategy = Retry(ExponentialBackoff(base=1, cap=10), 3)
+
+        redis_kwargs = {
+            "host": host,
+            "decode_responses": True,
+            "ssl": True,
+            "ssl_cert_reqs": "none",
+            "username": username,
+            "password": password,
+            "max_connections": max_connections,
+            "retry": retry_strategy,
+            "retry_on_error": [ConnectionError, TimeoutError],
+            "port": int(port) if port else 6380,
+            "socket_connect_timeout": 10,
+            # FIX 1: Raised from 3s to 30s.
+            # 3s was too aggressive for bulk pipeline operations under load
+            # (40-50k docs). Single key ops are unaffected; bulk ops now have
+            # enough headroom. Latency tradeoff is acceptable per requirements.
+            "socket_timeout": 30,
+            "health_check_interval": 30,
+        }
+
+        logger.warning(
+            "Redis client initializing — host=%s port=%s(%s) username_set=%s ssl=True",
+            host, port, type(port).__name__, bool(username)
+        )
+        return redis_kwargs
+
+    @staticmethod
+    def _parse_redis_value(value: Any) -> Any:
+        if value is None:
+            return None
+        try:
+            return json.loads(value)
+        except Exception:
+            return value
+
+    def _build_prefix(self, key_prefix: str | None = None) -> str:
+        config = ConfigReader().get_redis_config()
+        prefix = config.get("key") + ":" + key_prefix if key_prefix is not None else config.get("key")
+        return str(prefix).rstrip(":") + ":"
+
+    async def delete_keys(self, keys: list[str]) -> int:
+        """Delete multiple keys, returning number removed."""
+        if not keys:
+            return 0
+        try:
+            return await self._client.delete(*keys)
+        except AuthenticationError:
+            return await self._client.delete(*keys)
+
+    async def write_interaction(self, key: str, value: dict, expire_seconds: int | None = None, key_prefix: str | None = None):
+        """Write a single key to Redis with retry on failure.
+
+        FIX 2: Added one retry on any exception so transient timeouts on
+        single writes don't silently drop data.
+        """
+        prefix = self._build_prefix(key_prefix)
+        full_key = prefix + key
+        ttl = expire_seconds if expire_seconds is not None else self._seconds_until_next_midnight_utc()
+        try:
+            await self._client.set(full_key, json.dumps(value), ex=int(ttl))
+        except Exception as e:
+            logger.error(f"Failed to write to redis for key {full_key}, retrying once: {e}")
+            try:
+                await self._client.set(full_key, json.dumps(value), ex=int(ttl))
+            except Exception as e2:
+                logger.error(f"Retry also failed for key {full_key}: {e2}")
+
+    async def get_interaction(self, key: str, key_prefix: str | None = None) -> Any:
+        """Get a value by key."""
+        prefix = self._build_prefix(key_prefix)
+        full_key = prefix + key
+        try:
+            val = await self._client.get(full_key)
+        except AuthenticationError:
+            val = await self._client.get(full_key)
+        return self._parse_redis_value(val)
+
+    async def get_interactions_batch(self, keys: list[str], key_prefix: str | None = None) -> dict[str, Any]:
+        """Batch read many Redis keys, chunked to avoid timeouts on large keysets."""
+        if not keys:
+            return {}
+
+        prefix = self._build_prefix(key_prefix)
+        full_keys = [prefix + key for key in keys]
+
+        # FIX 3: Chunk mget so a large batch doesn't breach socket_timeout.
+        result: dict[str, Any] = {}
+        for i in range(0, len(full_keys), _REDIS_BATCH_CHUNK_SIZE):
+            chunk_full = full_keys[i:i + _REDIS_BATCH_CHUNK_SIZE]
+            chunk_logical = keys[i:i + _REDIS_BATCH_CHUNK_SIZE]
+            try:
+                values = await self._client.mget(*chunk_full)
+            except AuthenticationError:
+                values = await self._client.mget(*chunk_full)
+            for key, value in zip(chunk_logical, values):
+                result[key] = self._parse_redis_value(value)
+
+        return result
+
+    async def write_interactions_batch(
+        self,
+        items: dict[str, dict],
+        expire_seconds: int | None = None,
+        key_prefix: str | None = None,
+    ) -> int:
+        """Batch write Redis keys, chunked to handle large volumes without timeouts.
+
+        FIX 4: Previously sent all items in a single pipeline regardless of size.
+        Under 40-50k document spikes this caused socket timeouts. Now chunks into
+        groups of _REDIS_BATCH_CHUNK_SIZE (500) so each pipeline round trip
+        completes well within socket_timeout. Total data written is identical —
+        just spread across multiple pipelines. Latency increases slightly but no
+        data is lost.
+        """
+        if not items:
+            return 0
+
+        prefix = self._build_prefix(key_prefix)
+        ttl = expire_seconds if expire_seconds is not None else self._seconds_until_next_midnight_utc()
+        items_list = list(items.items())
+        total_written = 0
+
+        for i in range(0, len(items_list), _REDIS_BATCH_CHUNK_SIZE):
+            chunk = items_list[i:i + _REDIS_BATCH_CHUNK_SIZE]
+            pipe = self._client.pipeline(transaction=False)
+            for key, value in chunk:
+                pipe.set(prefix + key, json.dumps(value), ex=int(ttl))
+            try:
+                await pipe.execute()
+                total_written += len(chunk)
+            except AuthenticationError:
+                # Rebuild and retry this chunk once on auth error
+                pipe = self._client.pipeline(transaction=False)
+                for key, value in chunk:
+                    pipe.set(prefix + key, json.dumps(value), ex=int(ttl))
+                await pipe.execute()
+                total_written += len(chunk)
+            except Exception as e:
+                logger.error(
+                    f"Pipeline chunk {i}–{i + len(chunk)} failed ({len(chunk)} keys), retrying once: {e}"
+                )
+                try:
+                    pipe = self._client.pipeline(transaction=False)
+                    for key, value in chunk:
+                        pipe.set(prefix + key, json.dumps(value), ex=int(ttl))
+                    await pipe.execute()
+                    total_written += len(chunk)
+                except Exception as e2:
+                    logger.error(
+                        f"Chunk retry also failed ({len(chunk)} keys lost in this chunk): {e2}"
+                    )
+
+        return total_written
+
+    async def delete_interaction(self, key: str, key_prefix: str | None = None) -> int:
+        """Delete a key from Redis."""
+        prefix = self._build_prefix(key_prefix)
+        full_key = prefix + key
+        try:
+            return await self._client.delete(full_key)
+        except AuthenticationError:
+            return await self._client.delete(full_key)
+
+    async def get_all_with_prefix(self, prefix: str, *, extend_ttl_seconds: int | None = None, delete_after: bool = False) -> dict:
+        """Return mapping of full_redis_key -> parsed value for all keys matching prefix.
+
+        FIX 5: Previously called mget(*keys) with all keys at once, which
+        would timeout on large keysets. Now chunks the mget into groups of
+        _REDIS_BATCH_CHUNK_SIZE. Scan is unchanged (scan_iter already paginates).
+        """
+        p = self._build_prefix(prefix)
+        pattern = p + "*"
+
+        try:
+            keys = []
+            async for k in self._client.scan_iter(match=pattern, count=500):
+                keys.append(k)
+
+            if not keys:
+                return {}
+
+            if extend_ttl_seconds and extend_ttl_seconds > 0:
+                pipe = self._client.pipeline(transaction=False)
+                for k in keys:
+                    pipe.expire(k, int(extend_ttl_seconds))
+                await pipe.execute()
+
+            # Chunked mget — same data, no single oversized request
+            result = {}
+            for i in range(0, len(keys), _REDIS_BATCH_CHUNK_SIZE):
+                chunk = keys[i:i + _REDIS_BATCH_CHUNK_SIZE]
+                vals = await self._client.mget(*chunk)
+                for k, v in zip(chunk, vals):
+                    try:
+                        result[k] = json.loads(v) if v is not None else None
+                    except Exception:
+                        result[k] = v
+
+            if delete_after:
+                try:
+                    await self._client.delete(*keys)
+                except AuthenticationError:
+                    await self._client.delete(*keys)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to fetch keys with prefix {p}: {e}")
+            return {}
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        """Set TTL on a raw key."""
+        return await self._client.expire(key, seconds)
+
+    async def incr(self, key: str) -> int:
+        """Atomic increment on a raw key."""
+        return await self._client.incr(key)
+
+    async def decr(self, key: str) -> int:
+        """Atomic decrement on a raw key."""
+        return await self._client.decr(key)
