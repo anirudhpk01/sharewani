@@ -1,282 +1,694 @@
-import orjson as json
-import asyncio
-from typing import Any
-from redis.asyncio import Redis
-from redis.retry import Retry
-from redis.backoff import ExponentialBackoff
-from redis.exceptions import ConnectionError, TimeoutError, AuthenticationError
-import logging
-from datetime import datetime, timedelta, timezone
+from motor.motor_asyncio import AsyncIOMotorClient
+from threading import Lock
+from fastapi import Request
+from fastapi.responses import JSONResponse
 from app.utils.config import ConfigReader
-
-logger = logging.getLogger(__name__)
-
-# Chunk size for batch Redis operations.
-# Keeping pipelines to ~500 commands per round trip prevents socket timeouts
-# under heavy load (40-50k documents) while still being far more efficient
-# than writing one key at a time.
-_REDIS_BATCH_CHUNK_SIZE = 500
+from datetime import datetime, timezone, time, timedelta
+import asyncio
+import os
+import time as time_module
+from pymongo.write_concern import WriteConcern
+from pymongo.errors import PyMongoError
 
 
-class AWSRedis:
-    """Small async Redis wrapper used across the service.
+# This file handles most of the Mongo-side infrastructure for the service.
+#
+# It is responsible for:
+# 1. creating and reusing one shared Mongo client for the whole app process
+# 2. reading documents from Mongo in API and batch flows
+# 3. listening to Mongo change streams (CDC) and keeping Redis updated
+# 4. saving Redis snapshots back into Mongo before Redis keys expire at midnight UTC
+#
+# A simple way to think about it:
+# - `realtime_metrics.py` decides WHAT a conversation means
+# - `connectionpool.py` decides HOW data moves between Mongo, Redis, and the app
 
-    Main responsibilities:
-    - create the Redis client from app config
-    - build fully-qualified Redis keys with the correct prefix
-    - serialize Python dicts to JSON on write
-    - parse JSON strings back into Python objects on read
-    - apply default TTL rules for conversation keys
+# Shared error strings used when a Mongo-related API call fails.
+INTERNAL_SERVER_ERR = "Internal Server Error"
+INTERNAL_SERVER_MSG = "An unexpected error occurred. Please try again later."
+
+
+def get_logger_from_request(request: Request):
+    # The app stores the logger in `request.app.state`, so this helper keeps access simple.
+    return request.app.state.logger
+
+
+def _parse_date_value(raw_value: str) -> datetime | None:
+    """Try to parse a date/datetime string into a timezone-aware datetime (UTC)."""
+    # This helper accepts both plain dates and full ISO datetimes so callers do not
+    # need to worry about low-level parsing rules.
+    if not raw_value:
+        return None
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    # Support a few human-friendly date-only formats, not just one strict format.
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"):
+        try:
+            dt = datetime.strptime(value, fmt)
+            return dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            pass
+
+    # If it was not a plain date, try ISO-style datetime parsing.
+    try:
+        iso_value = value[:-1] + "+00:00" if value.endswith("Z") else value
+        dt = datetime.fromisoformat(iso_value)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _build_datetime_filter(key_name: str, raw_value):
     """
+    Build a Mongo range filter for datetime fields.
 
-    def __init__(self):
-        # Read config and create the underlying Redis client once for this wrapper instance.
-        logger.debug("Fetching AWS Redis credentials from store")
-        self._lock = asyncio.Lock()
-        kwargs = self._resolve_redis_kwargs()
-        self._client = Redis(**kwargs)
+    - Accepts date-only inputs (e.g., "06/02/2026") and expands to start-of-day UTC through now.
+    - Accepts datetime inputs and uses them as the lower bound through now.
+
+    Returns None if parsing fails so the caller can fall back to equality filters.
+    """
+    # Only build a datetime range when the field itself looks like a datetime field.
+    if not key_name or "date" not in key_name.lower():
+        return None
+
+    parsed: datetime | None = None
+    date_only = False
+
+    if isinstance(raw_value, datetime):
+        parsed = raw_value if raw_value.tzinfo else raw_value.replace(tzinfo=timezone.utc)
+        # If the caller gave midnight exactly, we treat that as a full-day filter.
+        date_only = parsed.timetz() == time(0, 0)
+    elif isinstance(raw_value, str):
+        parsed = _parse_date_value(raw_value)
+        # Strings without a time portion are also treated as full-day filters.
+        date_only = "T" not in raw_value and len(raw_value.strip()) <= 10
+
+    if not parsed:
+        return None
+
+    # For date-only input, start at the beginning of that UTC day.
+    # For full datetime input, use the provided value directly.
+    start = parsed.replace(hour=0, minute=0, second=0, microsecond=0) if date_only else parsed
+    now_utc = datetime.now(timezone.utc)
+    # The upper bound is always "now" because these queries are designed for recent data fetches.
+    return {"$gte": start, "$lte": now_utc}
+
+
+class MongoDBConnectionPool:
+    # This class behaves like an async singleton.
+    # In other words, one app process should create one shared Mongo client,
+    # and the rest of the code should reuse it.
+
+    @classmethod
+    async def close_pool(cls):
+        """
+        Close the MongoDB connection pool if it exists.
+        """
+        if cls._client is not None:
+            # Closing the client also closes the underlying network connections.
+            cls._client.close()
+            cls._client = None
+
+    """
+    Async Singleton MongoDB connection pool for FastAPI apps.
+    - Call await MongoDBConnectionPool.init_pool(config) ONCE at app startup (e.g. in lifespan/startup event).
+    - Use await MongoDBConnectionPool.get_client() or get_collection() anywhere in the app.
+    This avoids repeated config reads and ensures only one AsyncIOMotorClient is ever created.
+    """
+    _client = None
+    _config = None
+    _lock = asyncio.Lock()
 
     @staticmethod
-    def _seconds_until_next_midnight_utc() -> int:
-        """Return seconds from now (UTC) until the next 00:00 UTC boundary."""
-        now = datetime.now(timezone.utc)
-        next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-        delta = (next_midnight - now).total_seconds()
-        return max(1, int(delta))
-
-    def _resolve_redis_kwargs(self) -> dict:
-        config = ConfigReader().get_redis_config()
-        host = config.get("host")
-        port = config.get("port")
-        username = config.get("username")
-        password = config.get("redis_auth")
-
-        redis_maxconnections = config.get("max_connections")
-        try:
-            max_connections = int(redis_maxconnections) if redis_maxconnections is not None else 300
-        except Exception:
-            max_connections = 300
-
-        retry_strategy = Retry(ExponentialBackoff(base=1, cap=10), 3)
-
-        redis_kwargs = {
-            "host": host,
-            "decode_responses": True,
-            "ssl": True,
-            "ssl_cert_reqs": "none",
-            "username": username,
-            "password": password,
-            "max_connections": max_connections,
-            "retry": retry_strategy,
-            "retry_on_error": [ConnectionError, TimeoutError],
-            "port": int(port) if port else 6380,
-            "socket_connect_timeout": 10,
-            # FIX 1: Raised from 3s to 30s.
-            # 3s was too aggressive for bulk pipeline operations under load
-            # (40-50k docs). Single key ops are unaffected; bulk ops now have
-            # enough headroom. Latency tradeoff is acceptable per requirements.
-            "socket_timeout": 30,
-            "health_check_interval": 30,
-        }
-
-        logger.warning(
-            "Redis client initializing — host=%s port=%s(%s) username_set=%s ssl=True",
-            host, port, type(port).__name__, bool(username)
-        )
-        return redis_kwargs
-
-    @staticmethod
-    def _parse_redis_value(value: Any) -> Any:
-        if value is None:
-            return None
-        try:
-            return json.loads(value)
-        except Exception:
-            return value
-
-    def _build_prefix(self, key_prefix: str | None = None) -> str:
-        config = ConfigReader().get_redis_config()
-        prefix = config.get("key") + ":" + key_prefix if key_prefix is not None else config.get("key")
-        return str(prefix).rstrip(":") + ":"
-
-    async def delete_keys(self, keys: list[str]) -> int:
-        """Delete multiple keys, returning number removed."""
-        if not keys:
-            return 0
-        try:
-            return await self._client.delete(*keys)
-        except AuthenticationError:
-            return await self._client.delete(*keys)
-
-    async def write_interaction(self, key: str, value: dict, expire_seconds: int | None = None, key_prefix: str | None = None):
-        """Write a single key to Redis with retry on failure.
-
-        FIX 2: Added one retry on any exception so transient timeouts on
-        single writes don't silently drop data.
+    def serialize(document):
         """
-        prefix = self._build_prefix(key_prefix)
-        full_key = prefix + key
-        ttl = expire_seconds if expire_seconds is not None else self._seconds_until_next_midnight_utc()
-        try:
-            await self._client.set(full_key, json.dumps(value), ex=int(ttl))
-        except Exception as e:
-            logger.error(f"Failed to write to redis for key {full_key}, retrying once: {e}")
-            try:
-                await self._client.set(full_key, json.dumps(value), ex=int(ttl))
-            except Exception as e2:
-                logger.error(f"Retry also failed for key {full_key}: {e2}")
-
-    async def get_interaction(self, key: str, key_prefix: str | None = None) -> Any:
-        """Get a value by key."""
-        prefix = self._build_prefix(key_prefix)
-        full_key = prefix + key
-        try:
-            val = await self._client.get(full_key)
-        except AuthenticationError:
-            val = await self._client.get(full_key)
-        return self._parse_redis_value(val)
-
-    async def get_interactions_batch(self, keys: list[str], key_prefix: str | None = None) -> dict[str, Any]:
-        """Batch read many Redis keys, chunked to avoid timeouts on large keysets."""
-        if not keys:
-            return {}
-
-        prefix = self._build_prefix(key_prefix)
-        full_keys = [prefix + key for key in keys]
-
-        # FIX 3: Chunk mget so a large batch doesn't breach socket_timeout.
-        result: dict[str, Any] = {}
-        for i in range(0, len(full_keys), _REDIS_BATCH_CHUNK_SIZE):
-            chunk_full = full_keys[i:i + _REDIS_BATCH_CHUNK_SIZE]
-            chunk_logical = keys[i:i + _REDIS_BATCH_CHUNK_SIZE]
-            try:
-                values = await self._client.mget(*chunk_full)
-            except AuthenticationError:
-                values = await self._client.mget(*chunk_full)
-            for key, value in zip(chunk_logical, values):
-                result[key] = self._parse_redis_value(value)
-
-        return result
-
-    async def write_interactions_batch(
-        self,
-        items: dict[str, dict],
-        expire_seconds: int | None = None,
-        key_prefix: str | None = None,
-    ) -> int:
-        """Batch write Redis keys, chunked to handle large volumes without timeouts.
-
-        FIX 4: Previously sent all items in a single pipeline regardless of size.
-        Under 40-50k document spikes this caused socket timeouts. Now chunks into
-        groups of _REDIS_BATCH_CHUNK_SIZE (500) so each pipeline round trip
-        completes well within socket_timeout. Total data written is identical —
-        just spread across multiple pipelines. Latency increases slightly but no
-        data is lost.
+        Recursively convert datetime objects to ISO format in a MongoDB document or list of documents.
+        :param document: A single document (dict) or list of documents (list of dicts).
+        :return: Document(s) with datetime fields serialized to ISO format.
         """
-        if not items:
-            return 0
+        # Many parts of the service expect plain JSON-friendly objects.
+        # This helper walks the returned Mongo structure and converts datetime objects
+        # into ISO strings so they can be logged, returned, or further processed safely.
+        if isinstance(document, list):
+            return [MongoDBConnectionPool.serialize(doc) for doc in document]
+        elif isinstance(document, dict):
+            # `_id` is removed because the rest of this service usually does not need it,
+            # and removing it keeps the downstream shape simpler and more consistent.
+            doc = dict(document)
+            doc.pop('_id', None)
+            for key, value in doc.items():
+                if isinstance(value, datetime):
+                    doc[key] = value.isoformat()
+                elif isinstance(value, dict):
+                    doc[key] = MongoDBConnectionPool.serialize(value)
+                elif isinstance(value, list):
+                    doc[key] = MongoDBConnectionPool.serialize(value)
+            return doc
+        else:
+            return document
 
-        prefix = self._build_prefix(key_prefix)
-        ttl = expire_seconds if expire_seconds is not None else self._seconds_until_next_midnight_utc()
-        items_list = list(items.items())
-        total_written = 0
+    @classmethod
+    async def init_pool(cls, config=None):
+        """
+        Create the shared Mongo client once.
 
-        for i in range(0, len(items_list), _REDIS_BATCH_CHUNK_SIZE):
-            chunk = items_list[i:i + _REDIS_BATCH_CHUNK_SIZE]
-            pipe = self._client.pipeline(transaction=False)
-            for key, value in chunk:
-                pipe.set(prefix + key, json.dumps(value), ex=int(ttl))
-            try:
-                await pipe.execute()
-                total_written += len(chunk)
-            except AuthenticationError:
-                # Rebuild and retry this chunk once on auth error
-                pipe = self._client.pipeline(transaction=False)
-                for key, value in chunk:
-                    pipe.set(prefix + key, json.dumps(value), ex=int(ttl))
-                await pipe.execute()
-                total_written += len(chunk)
-            except Exception as e:
-                logger.error(
-                    f"Pipeline chunk {i}–{i + len(chunk)} failed ({len(chunk)} keys), retrying once: {e}"
+        Why this matters in the codebase:
+        - `main.py` calls this at startup.
+        - every later Mongo read depends on this having succeeded.
+        - using one shared client is much cheaper than making a new client per request.
+        """
+        async with cls._lock:
+            if cls._client is None:
+                if config is None:
+                    # Read config lazily if the caller did not explicitly provide one.
+                    config = ConfigReader().get_mongo_config()
+                cls._config = config
+                cls._client = AsyncIOMotorClient(
+                    config['uri'],
+                    maxPoolSize=config['max_pool_size'],
+                    minPoolSize=config['min_pool_size'],
+                    maxIdleTimeMS=config['idle_timeout_ms'],
+                    appname='prompt_manager'
                 )
-                try:
-                    pipe = self._client.pipeline(transaction=False)
-                    for key, value in chunk:
-                        pipe.set(prefix + key, json.dumps(value), ex=int(ttl))
-                    await pipe.execute()
-                    total_written += len(chunk)
-                except Exception as e2:
-                    logger.error(
-                        f"Chunk retry also failed ({len(chunk)} keys lost in this chunk): {e2}"
-                    )
 
-        return total_written
+    @classmethod
+    async def get_client(cls):
+        # If this raises, it usually means startup did not initialize Mongo correctly.
+        if cls._client is None:
+            raise RuntimeError("MongoDBConnectionPool not initialized. Call init_pool() at startup.")
+        return cls._client
 
-    async def delete_interaction(self, key: str, key_prefix: str | None = None) -> int:
-        """Delete a key from Redis."""
-        prefix = self._build_prefix(key_prefix)
-        full_key = prefix + key
-        try:
-            return await self._client.delete(full_key)
-        except AuthenticationError:
-            return await self._client.delete(full_key)
-
-    async def get_all_with_prefix(self, prefix: str, *, extend_ttl_seconds: int | None = None, delete_after: bool = False) -> dict:
-        """Return mapping of full_redis_key -> parsed value for all keys matching prefix.
-
-        FIX 5: Previously called mget(*keys) with all keys at once, which
-        would timeout on large keysets. Now chunks the mget into groups of
-        _REDIS_BATCH_CHUNK_SIZE. Scan is unchanged (scan_iter already paginates).
+    @classmethod
+    async def get_database_collection(cls, dbname, collectionname):
         """
-        p = self._build_prefix(prefix)
-        pattern = p + "*"
+        Return a Motor collection object for the given database and collection.
+        """
+        # This hides the low-level client/database indexing from the rest of the code.
+        client = await cls.get_client()
+        db = client[dbname]
+        return db[collectionname]
 
+    @classmethod
+    async def get_documents(cls, request: Request, dbname, collectionname, key, key_name):
+        """
+        Fetch all documents from a specific collection that match the provided filter.
+        :param dbname: Name of the database
+        :param collectionname: Name of the collection
+        :param key: Value to filter on
+        :param key_name: Column / field name to filter on
+        :return: List of serialized documents or "No data Available"
+        """
+        # This is a direct query helper used by API-facing flows.
+        # It supports both simple equality filters and datetime range filters.
+        logger = get_logger_from_request(request)
         try:
-            keys = []
-            async for k in self._client.scan_iter(match=pattern, count=500):
-                keys.append(k)
+            collection = await cls.get_database_collection(dbname, collectionname)
+            range_filter = _build_datetime_filter(key_name, key)
+            if range_filter:
+                # If the target field looks like a datetime field, build a time range query.
+                filter_query = {key_name: range_filter}
 
-            if not keys:
-                return {}
+                # Some collections store dates as real Mongo datetimes.
+                # Some store them as strings.
+                # We query both forms to be more tolerant of mixed historical data.
+                start_dt = range_filter.get("$gte")
+                end_dt = range_filter.get("$lte")
+                if isinstance(start_dt, datetime) and isinstance(end_dt, datetime):
+                    start_iso = start_dt.isoformat()
+                    end_iso = end_dt.isoformat()
+                    filter_query = {
+                        "$or": [
+                            {key_name: range_filter},
+                            {key_name: {"$gte": start_iso, "$lte": end_iso}},
+                        ]
+                    }
 
-            if extend_ttl_seconds and extend_ttl_seconds > 0:
-                pipe = self._client.pipeline(transaction=False)
-                for k in keys:
-                    pipe.expire(k, int(extend_ttl_seconds))
-                await pipe.execute()
-
-            # Chunked mget — same data, no single oversized request
-            result = {}
-            for i in range(0, len(keys), _REDIS_BATCH_CHUNK_SIZE):
-                chunk = keys[i:i + _REDIS_BATCH_CHUNK_SIZE]
-                vals = await self._client.mget(*chunk)
-                for k, v in zip(chunk, vals):
-                    try:
-                        result[k] = json.loads(v) if v is not None else None
-                    except Exception:
-                        result[k] = v
-
-            if delete_after:
-                try:
-                    await self._client.delete(*keys)
-                except AuthenticationError:
-                    await self._client.delete(*keys)
-
-            return result
-
+                await logger.info(
+                    f"Applying range filter on {key_name}: {range_filter.get('$gte')} to {range_filter.get('$lte')}"
+                )
+            else:
+                # If no datetime filter applies, fall back to a normal exact match query.
+                filter_query = {key_name: key}
+            projection = {"_id": 0}
+            cursor = collection.find(filter_query, projection)
+            documents = []
+            async for doc in cursor:
+                # This helper is intended for direct reads, so collecting all docs is fine here.
+                documents.append(doc)
+            if documents:
+                return cls.serialize(documents)
+            else:
+                return "No data Available"
         except Exception as e:
-            logger.error(f"Failed to fetch keys with prefix {p}: {e}")
+            # Return a stable JSON error payload instead of letting the exception leak directly.
+            await logger.error(f"Failed to retrieve documents from collection '{collectionname}': {e}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": INTERNAL_SERVER_ERR,
+                    "message": INTERNAL_SERVER_MSG,
+                    "statusCodeValue": 500
+                }
+            )
+
+    @classmethod
+    async def get_documents_grouped_by_conversation_ids(
+        cls,
+        request: Request,
+        dbname,
+        collectionname,
+        conversation_ids: list[str],
+    ) -> dict[str, list[dict]]:
+        """Fetch all docs for the given conversation IDs in one query and group them in memory."""
+        # This helper is very important for CDC correctness.
+        # When a single Mongo document changes, the aggregator does not just process that one doc.
+        # Instead, it refetches the full conversation so Redis is rebuilt from complete truth.
+        if not conversation_ids:
             return {}
 
-    async def expire(self, key: str, seconds: int) -> bool:
-        """Set TTL on a raw key."""
-        return await self._client.expire(key, seconds)
+        logger = get_logger_from_request(request)
+        try:
+            collection = await cls.get_database_collection(dbname, collectionname)
+            projection = {"_id": 0}
+            fetch_batch_size = int(os.getenv("CDC_FETCH_CURSOR_BATCH_SIZE", "10000"))
+            # Sorting here gives a stable and predictable document order.
+            cursor = collection.find(
+                {"conversationId": {"$in": list(conversation_ids)}},
+                projection,
+            ).sort([("conversationId", 1), ("createdDateTime", 1)])
+            cursor = cursor.batch_size(fetch_batch_size)
 
-    async def incr(self, key: str) -> int:
-        """Atomic increment on a raw key."""
-        return await self._client.incr(key)
+            # Pre-seed the output so every requested ID exists in the result map.
+            grouped_docs: dict[str, list[dict]] = {cid: [] for cid in conversation_ids}
+            async for raw_doc in cursor:
+                try:
+                    doc = cls.serialize(raw_doc)
+                except Exception:
+                    doc = raw_doc
 
-    async def decr(self, key: str) -> int:
-        """Atomic decrement on a raw key."""
-        return await self._client.decr(key)
+                if not isinstance(doc, dict):
+                    continue
+
+                cid = doc.get("conversationId")
+                if not cid:
+                    # Skip anything that cannot be tied back to a conversation group.
+                    continue
+                grouped_docs.setdefault(cid, []).append(doc)
+
+            return grouped_docs
+        except Exception as e:
+            await logger.error(
+                f"Failed to retrieve grouped conversation documents from collection '{collectionname}': {e}"
+            )
+            return {}
+
+    @classmethod
+    async def start_cdc_stream(
+        cls,
+        app,
+        *,
+        dbname: str | None = None,
+        collectionname: str = "anirudh_conversation_test2",
+        redis_prefix: str = "rt",
+        max_concurrency: int = 40,
+        retry_delay_seconds: int = 5,
+    ):
+        """Begin a change-stream listener that mirrors Mongo updates into Redis in near real time.
+
+        - Waits for insert/update/replace operations on the target collection.
+        - For each change, refetches the full conversationId group and re-runs aggregation logic.
+        - Writes/updates the Redis record (with TTL to next midnight handled by Redis client).
+        - On errors, logs and retries with a short backoff to avoid tight loops.
+        """
+
+        logger = getattr(app.state, "logger", None)
+
+        class _RequestProxy:
+            """Lightweight shim so existing get_documents signature can log via app logger."""
+            def __init__(self, app_ref):
+                self.app = app_ref
+
+        request_proxy = _RequestProxy(app)
+
+        async def _log(level_fn, msg: str):
+            # Safe logger wrapper: logging should never crash the CDC loop itself.
+            try:
+                if level_fn:
+                    await level_fn(msg)
+            except Exception:
+                pass
+
+        while True:
+            # Outer restart loop.
+            # If the stream dies for any reason, we log, sleep briefly, and rebuild it.
+            try:
+                target_db = dbname or (cls._config.get("database_name") if cls._config else None)
+                if not target_db:
+                    config = ConfigReader().get_mongo_config()
+                    target_db = config.get("database_name")
+
+                collection = await cls.get_database_collection(target_db, collectionname)
+                pipeline = [{"$match": {"operationType": {"$in": ["insert", "update", "replace"]}}}]
+
+                await _log(logger.info if logger else None, f"CDC stream: watching {target_db}.{collectionname} for changes")
+
+                from app.core.redis_connect import AWSRedis
+                from app.service.realtime_metrics import RealtimeMetrics
+
+                redis_client = AWSRedis()
+                metrics = RealtimeMetrics(
+                    redis_client=redis_client,
+                    logger=logger,
+                    redis_key_prefix=redis_prefix,
+                )
+
+                # CDC_QUEUE_MAXSIZE bounds memory under sustained high load.
+                # At 3k docs/second the queue fills fast — without a cap, memory
+                # grows unboundedly during a busy day. With a cap, the change-stream
+                # reader applies back-pressure (waits) instead of queuing forever.
+                # The pending/dirty dedup means a full queue does not mean data loss —
+                # IDs already in pending are marked dirty and reprocessed, not dropped.
+                queue_maxsize = int(os.getenv("CDC_QUEUE_MAXSIZE", "20000"))
+                queue: asyncio.Queue[str] = asyncio.Queue(maxsize=queue_maxsize)
+                pending: set[str] = set()
+                dirty: set[str] = set()
+                state_lock = asyncio.Lock()
+
+                batch_window_ms = int(os.getenv("CDC_BATCH_WINDOW_MS", "1500"))
+                batch_window = max(0.05, batch_window_ms / 1000)
+                sem = asyncio.Semaphore(max(1, max_concurrency))
+                max_batches_in_flight = int(os.getenv("CDC_MAX_BATCHES_IN_FLIGHT", "3"))
+                batch_sem = asyncio.Semaphore(max(1, max_batches_in_flight))
+                # CDC_NUM_CONSUMERS controls how many parallel batch consumers drain
+                # the queue. One consumer cannot keep up at sustained 3k docs/second.
+                # Multiple consumers drain the queue faster, keeping memory stable
+                # and processing latency low during busy periods.
+                num_consumers = int(os.getenv("CDC_NUM_CONSUMERS", "3"))
+                active_batch_tasks: set[asyncio.Task] = set()
+
+                # FIX: CDC process_batch is now chunked to handle large spikes safely.
+                #
+                # Previously, if a burst of 40-50k documents arrived and the debounce
+                # window grouped them into one large batch, two problems occurred:
+                # 1. get_documents_grouped_by_conversation_ids was called with a huge
+                #    $in list, putting heavy pressure on Mongo in one shot.
+                # 2. asyncio.gather(*tasks) created one task per conversation ID in the
+                #    entire batch simultaneously, causing memory pressure under large spikes.
+                #
+                # The fix splits the batch into chunks of CDC_PROCESS_CHUNK_SIZE (default 200)
+                # before hitting Mongo or creating tasks. Each chunk is processed sequentially,
+                # keeping Mongo $in queries bounded and task count manageable.
+                # The dirty/requeue mechanism is unchanged so no change events are lost.
+                async def process_batch(batch: set[str]):
+                    cdc_chunk_size = int(os.getenv("CDC_PROCESS_CHUNK_SIZE", "200"))
+                    batch_list = list(batch)
+
+                    if logger:
+                        try:
+                            await logger.debug(
+                                f"CDC processing batch of {len(batch_list)} conversation(s) "
+                                f"in chunks of {cdc_chunk_size}"
+                            )
+                        except Exception:
+                            pass
+
+                    for i in range(0, len(batch_list), cdc_chunk_size):
+                        chunk = set(batch_list[i:i + cdc_chunk_size])
+
+                        # Bounded Mongo $in query — at most cdc_chunk_size IDs per query.
+                        docs_by_cid = await cls.get_documents_grouped_by_conversation_ids(
+                            request_proxy,
+                            target_db,
+                            collectionname,
+                            list(chunk),
+                        )
+                        # Bounded Redis batch read — also chunked inside get_interactions_batch.
+                        existing_by_cid = await redis_client.get_interactions_batch(
+                            list(chunk), key_prefix=redis_prefix
+                        )
+                        writes: dict[str, dict] = {}
+
+                        async def handle(cid: str):
+                            async with sem:
+                                try:
+                                    docs = docs_by_cid.get(cid) or []
+                                    if not docs:
+                                        if logger:
+                                            try:
+                                                await logger.debug(f"CDC: no docs fetched for cid={cid}")
+                                            except Exception:
+                                                pass
+                                        return
+                                    if logger:
+                                        try:
+                                            await logger.debug(f"CDC: fetched {len(docs)} docs for cid={cid}")
+                                        except Exception:
+                                            pass
+                                    aggregated = metrics._build_aggregated_payload(docs)
+                                    if not aggregated:
+                                        return
+                                    merged = metrics._merge_with_existing(existing_by_cid.get(cid), aggregated)
+                                    writes[cid] = merged
+                                except Exception as w_exc:
+                                    await _log(logger.error if logger else None, f"CDC worker error for {cid}: {w_exc}")
+                                finally:
+                                    requeue = False
+                                    async with state_lock:
+                                        if cid in dirty:
+                                            dirty.discard(cid)
+                                            requeue = True
+                                        else:
+                                            pending.discard(cid)
+
+                                    if requeue:
+                                        await queue.put(cid)
+
+                        # At most cdc_chunk_size tasks created at once — safe under any spike.
+                        tasks = [asyncio.create_task(handle(cid)) for cid in chunk]
+                        if tasks:
+                            await asyncio.gather(*tasks)
+                        if writes:
+                            # Chunked inside write_interactions_batch — safe for large writes.
+                            await redis_client.write_interactions_batch(writes, key_prefix=redis_prefix)
+
+                async def batch_consumer():
+                    # This background consumer keeps pulling conversation IDs from the queue,
+                    # waits a very short time for nearby arrivals, and then launches a batch.
+                    while True:
+                        cid = await queue.get()
+                        batch = {cid}
+                        queue.task_done()
+                        start = time_module.monotonic()
+                        while True:
+                            remaining = batch_window - (time_module.monotonic() - start)
+                            if remaining <= 0:
+                                break
+                            try:
+                                nxt = await asyncio.wait_for(queue.get(), timeout=remaining)
+                                batch.add(nxt)
+                                queue.task_done()
+                            except asyncio.TimeoutError:
+                                break
+
+                        async def _run_batch(batch_to_process: set[str]):
+                            async with batch_sem:
+                                await process_batch(batch_to_process)
+
+                        batch_task = asyncio.create_task(_run_batch(batch))
+                        active_batch_tasks.add(batch_task)
+                        batch_task.add_done_callback(active_batch_tasks.discard)
+
+                # Start multiple consumers so the queue drains faster under
+                # sustained high load. Each consumer independently pulls batches
+                # and processes them — they share the same pending/dirty state
+                # safely via state_lock.
+                consumer_tasks = [
+                    asyncio.create_task(batch_consumer())
+                    for _ in range(num_consumers)
+                ]
+                await _log(
+                    logger.info if logger else None,
+                    f"CDC batch consumers started (count={num_consumers}, window={batch_window_ms}ms, "
+                    f"max_batches_in_flight={max_batches_in_flight}, queue_maxsize={queue_maxsize}) "
+                    f"for {target_db}.{collectionname}",
+                )
+
+                async with collection.watch(pipeline, full_document="updateLookup") as stream:
+                    async for change in stream:
+                        full_doc = change.get("fullDocument") if isinstance(change, dict) else None
+                        if not full_doc:
+                            continue
+                        cid = full_doc.get("conversationId") if isinstance(full_doc, dict) else None
+                        if not cid:
+                            continue
+                        if logger:
+                            try:
+                                await logger.debug(f"CDC change captured for cid={cid}")
+                            except Exception:
+                                pass
+                        async with state_lock:
+                            if cid in pending:
+                                # Already queued — mark dirty so it gets reprocessed
+                                # after the current run. This is the primary dedup
+                                # mechanism and means a full queue never loses data
+                                # for already-tracked conversations.
+                                dirty.add(cid)
+                                continue
+                            pending.add(cid)
+
+                        # Back-pressure: if the queue is full, wait here instead of
+                        # growing memory unboundedly. The change stream reader pauses
+                        # naturally — Mongo buffers changes on its side during the
+                        # wait so no events are lost at the source.
+                        await queue.put(cid)
+
+            except (PyMongoError, Exception) as exc:
+                await _log(logger.error if logger else None, f"CDC stream error for {collectionname}: {exc}")
+                await asyncio.sleep(max(1, retry_delay_seconds))
+            finally:
+                # Cancel all consumer tasks from this session on restart.
+                try:
+                    for ct in locals().get("consumer_tasks", []):
+                        ct.cancel()
+                except Exception:
+                    pass
+                try:
+                    batch_tasks = list(locals().get("active_batch_tasks", set()))
+                    for task in batch_tasks:
+                        task.cancel()
+                except Exception:
+                    pass
+
+    @classmethod
+    async def dump_redis_prefix_to_mongo(
+        cls,
+        app,
+        *,
+        dbname: str | None = None,
+        redis_prefix: str = "rt",
+        target_collection: str = "conversation_anirudh_download2",
+        ttl_extension_seconds: int = 900,
+        delete_after_dump: bool = True,
+        batch_size: int = 1000,
+    ):
+        """Snapshot Redis prefix data into Mongo (run around midnight before TTL expiry)."""
+        # Redis is intentionally ephemeral in this system.
+        # This dump function preserves end-of-day snapshots in Mongo so historical lookup remains possible.
+
+        logger = getattr(app.state, "logger", None)
+
+        def _now():
+            return datetime.now(timezone.utc)
+
+        try:
+            from app.core.redis_connect import AWSRedis
+
+            redis_client = AWSRedis()
+            # Extend TTLs while reading to reduce the risk of keys expiring during the dump itself.
+            data = await redis_client.get_all_with_prefix(
+                redis_prefix,
+                extend_ttl_seconds=ttl_extension_seconds,
+                delete_after=False,
+            )
+
+            if not data:
+                if logger:
+                    await logger.info(f"Redis dump: no keys found for prefix {redis_prefix}")
+                return 0
+
+            target_db = dbname or (cls._config.get("database_name") if cls._config else None)
+            if not target_db:
+                config = ConfigReader().get_mongo_config()
+                target_db = config.get("database_name")
+
+            collection = await cls.get_database_collection(target_db, target_collection)
+
+            docs = []
+            dumped_at = _now()
+            for full_key, payload in data.items():
+                doc = payload if isinstance(payload, dict) else {"value": payload}
+                doc = dict(doc)
+                doc["_redis_key"] = full_key
+                doc["_dumped_at_utc"] = dumped_at
+                docs.append(doc)
+
+            # Insert in smaller chunks so one oversized write does not affect the whole dump.
+            inserted = 0
+            for i in range(0, len(docs), batch_size):
+                batch = docs[i: i + batch_size]
+                try:
+                    res = await collection.insert_many(batch, ordered=False)
+                    inserted += len(res.inserted_ids)
+                except Exception as batch_exc:
+                    if logger:
+                        await logger.error(f"Redis dump batch insert failed: {batch_exc}")
+
+            if delete_after_dump:
+                try:
+                    # Only remove Redis keys after the Mongo copy step has finished.
+                    await redis_client.delete_keys(list(data.keys()))
+                except Exception as del_exc:
+                    if logger:
+                        await logger.error(f"Redis dump cleanup failed: {del_exc}")
+
+            if logger:
+                await logger.info(
+                    f"Redis dump complete: {inserted} docs from prefix {redis_prefix} into {target_db}.{target_collection}"
+                )
+
+            return inserted
+        except Exception as exc:
+            if logger:
+                await logger.error(f"Redis dump failed for prefix {redis_prefix}: {exc}")
+            return 0
+
+    @classmethod
+    async def schedule_daily_redis_dump(
+        cls,
+        app,
+        *,
+        redis_prefix: str = "rt",
+        target_collection: str = "conversation_anirudh_download2",
+        lead_seconds: int = 30,
+        ttl_extension_seconds: int = 900,
+    ):
+        """Run a dump near midnight UTC every day, with a small lead to beat TTL expiry."""
+        # This scheduler is the bridge from "today's realtime Redis state" to
+        # "historical Mongo snapshot data".
+        # Without it, Redis expiry would erase the aggregated state at midnight.
+
+        logger = getattr(app.state, "logger", None)
+
+        def seconds_until_next_midnight_utc():
+            now = datetime.now(timezone.utc)
+            next_midnight = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            return max(1, int((next_midnight - now).total_seconds()))
+
+        while True:
+            try:
+                sleep_for = max(1, seconds_until_next_midnight_utc() - max(0, lead_seconds))
+                if logger:
+                    await logger.info(
+                        f"Redis dump scheduler sleeping {sleep_for}s before next run (prefix={redis_prefix}, collection={target_collection})"
+                    )
+                await asyncio.sleep(sleep_for)
+
+                if logger:
+                    await logger.info(
+                        f"Starting scheduled Redis dump (prefix={redis_prefix}, collection={target_collection})"
+                    )
+                await cls.dump_redis_prefix_to_mongo(
+                    app,
+                    redis_prefix=redis_prefix,
+                    target_collection=target_collection,
+                    ttl_extension_seconds=ttl_extension_seconds,
+                    delete_after_dump=True,
+                )
+            except Exception as exc:
+                if logger:
+                    await logger.error(f"Scheduled Redis dump failed: {exc}")
+            finally:
+                # Small buffer prevents an accidental tight loop if timing lands awkwardly.
+                await asyncio.sleep(5)
