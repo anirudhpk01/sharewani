@@ -1,5 +1,1 @@
-logger.info(
-    "Redis client initializing — host=%s port=%s(%s) username_set=%s ssl=True",
-    host, port, type(port).__name__, bool(username)
-)
-# never log password or key
+Hey team, need a quick infra fix — our ECS tasks can't reach ElastiCache Redis in DEV/UAT/SIT. Code and credentials are confirmed fine, it's a security group gap. Need TCP port 16379 open outbound from ECS task SG and inbound on ElastiCache SG for all 3 envs. Can someone pick this up?
