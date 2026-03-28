@@ -1,1 +1,4 @@
 Hey team, need a quick infra fix — our ECS tasks can't reach ElastiCache Redis in DEV/UAT/SIT. Code and credentials are confirmed fine, it's a security group gap. Need TCP port 16379 open outbound from ECS task SG and inbound on ElastiCache SG for all 3 envs. Can someone pick this up?
+
+
+Hey, checked the code thoroughly — refactored the secret manager, fixed a port type bug (was coming in as string from Secrets Manager), added logs to confirm credentials and host are loading correctly in deployed. All three envs are pulling the right ElastiCache endpoint with correct creds and SSL. It's a security group issue on the infra side, ECS tasks don't have outbound access to ElastiCache on port 16379. Raised it with the infra team.
