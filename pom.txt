@@ -1,155 +1,32 @@
-Here's your prompt:
+1.Reduce or eliminate updateLookup if possible
+full_document: updateLookup is expensive because it does a synchronous document read for every update event, on the critical path of event delivery. You're using it because you want the full document. But consider: your backend immediately discards the attached full document and refetches all docs for the conversation from Mongo anyway.
+If that's the case, you don't need updateLookup at all. You only need the conversationId from the event, which is available in documentKey or fullDocumentBeforeChange without a lookup.
+# Instead of:
+collection.watch(pipeline, full_document="updateLookup")
 
----
+# Use:
+collection.watch(pipeline, full_document="required")  # only for inserts where full doc is already there
+# or just don't set full_document for updates — you only need the conversationId from documentKey
+This removes the extra read on every update event entirely. At high update volume (VOL doc being updated on every transition) this is a significant reduction in primary read load and event delivery latency.
+2. Use a dedicated connection for the change stream — don't share it with your query pool
+Your MongoDBConnectionPool likely serves both the change stream watcher and the batch document fetch queries that the CDC consumers run. Under heavy load, your consumers are doing large grouped queries (fetch all docs for 50 conversation IDs at once) which consume connection pool slots. If the change stream cursor is competing for connection pool slots with these queries, event delivery slows down.
+Fix: maintain a separate dedicated MongoClient instance exclusively for the change stream cursor. Give it a pool size of 1 — it only needs one connection, but that connection should never be taken away by query traffic.
+# Dedicated client just for CDC
+cdc_client = MongoClient(
+    uri,
+    maxPoolSize=1,
+    minPoolSize=1,
+    readPreference="secondaryPreferred"
+)
 
-**CONTEXT — Read this fully before touching any code**
-
-You are working on a Python backend service called RealtimeAnalytics. This service listens to a MongoDB change stream (CDC) for conversation documents, builds per-conversation latest-state payloads, writes them to Redis, and maintains aggregated total-metrics buckets per market and timespan window (e.g. CUR_24H_UK, PREV_24H_UK).
-
-**The core problem we are investigating and fixing right now:**
-
-Across two deployed environments (DEV and SIT), both listening to CDC on the same MongoDB collection and same database, we are seeing **different total call counts** in our metrics buckets — off by thousands — with no backend crashes and no errors in logs. When data volume is low, numbers are consistent and correct. Under heavy load, they diverge. The data generation team has confirmed the same number of conversations are inserted in both cases. This is not a field-level accuracy issue. This is `total` — the most basic counter, one per conversation — being wrong. Some conversations that exist in MongoDB are simply not being counted in Redis at all.
-
-**What we have already ruled out:**
-
-- Backend crashes or exceptions surfacing in logs — not happening
-- Data generation team inserting different data per environment — confirmed same data
-- Bucketing math or field-level aggregation logic being wrong — not the focus, `total` itself is wrong
-- Stale conversation state rebuilds affecting `total` — even if a conversation is rebuilt multiple times from its Mongo docs, it still contributes exactly 1 to `total`, so rebuild correctness does not affect this count
-
-**The architectural facts you must understand before looking at any code:**
-
-1. MongoDB CDC events trigger ingestion. Each event extracts a `conversationId` and enqueues it into an in-memory async queue.
-2. A deduplication mechanism (`pending` / `dirty`) ensures a conversation already in-flight is not enqueued again — it is marked dirty and replayed once after the current processing completes.
-3. Consumer workers drain the queue in batches. Each batch is split into chunks. For each chunk, all Mongo docs for all conversation IDs in that chunk are fetched in one grouped query, the latest state is rebuilt from scratch chronologically, merged with any existing Redis state, and written to both a string keyspace and a hash mirror in Redis.
-4. Total metrics buckets are updated incrementally on every chunk flush (subtract old contribution, add new contribution) and also fully rebuilt from the Redis hash mirror every ~60 seconds as a healing pass.
-5. The `total` counter in a bucket is simply the count of conversations in Redis whose `first_seen_at` falls within the CUR or PREV window for that market. One conversation = one count. No arithmetic involved.
-6. There is no persisted CDC resume token — do not focus on that, we are not redeploying. Focus entirely on what can be fixed in the running code.
-7. TTL for Redis keys is set to seconds until next midnight UTC, not a rolling 24 hours.
-
----
-
-**What we believe is happening (hypotheses to investigate and verify in code):**
-
-**Hypothesis 1 — Silent queue drops under load**
-The CDC queue has a max size (`CDC_QUEUE_MAXSIZE`). If the watcher enqueues faster than consumers drain under heavy load, and the enqueue call is non-blocking or uses `put_nowait`, conversation IDs are silently discarded when the queue is full. No error is raised. No log is written. That conversation never reaches Redis and never contributes to `total`. Different environments with different consumer counts or queue sizes drop different numbers of IDs, producing different totals.
-
-**Hypothesis 2 — `should_enqueue_cdc_change()` filtering differs between environments**
-If this function reads any config value that differs between DEV and SIT — market filters, conversation type filters, prefix allowlists, feature flags — it will silently exclude different conversations per environment. They never enter the queue and are invisible to the entire pipeline.
-
-**Hypothesis 3 — Silent conversation ID loss in the flush or finalize path**
-If `_flush_cdc_chunk_results()` or `_finalize_cdc_chunk()` has any exception handler that catches a failure, removes the conversation ID from `pending`, but does not re-queue it — that ID is permanently lost. The code continues, no crash, no log. The conversation exists in Mongo but never in Redis.
-
-**Hypothesis 4 — Redis hash mirror and string keyspace out of sync**
-The 60s healing rebuild uses `HSCAN` on the hash mirror exclusively. If a delete pipeline succeeds on the string key but fails on `HDEL`, or if `HSET` fails while `SET` succeeds, the two representations diverge. The rebuild then counts conversations that were deleted (ghost counts) or misses conversations that were written (undercounts). Environments with different Redis memory pressure or connection pool behaviour will diverge differently.
-
-**Hypothesis 5 — `first_seen_at` being set incorrectly, causing conversations to fall outside all bucket windows**
-`total` only counts conversations whose `first_seen_at` falls within the CUR or PREV window. If `first_seen_at` is being assigned the CDC event arrival time rather than the actual document timestamp for some conversations, or if the merge logic is accidentally advancing `first_seen_at` forward instead of keeping the earliest known value, those conversations fall outside both windows and contribute 0 to `total` in all buckets. Under heavy load where doc ordering is less predictable, this would affect more conversations.
-
-**Hypothesis 6 — 60s rebuild and incremental update racing despite the lock**
-If `TOTAL_METRICS_LOCK` is acquired after the rebuild reads all hash fields but before it writes the results, an incremental update that fires in the read-to-write gap is either double-counted or lost when the rebuild overwrites the buckets. Higher CDC throughput environments (SIT) would experience more races than lower throughput ones (DEV), producing systematically different counts.
-
-**Hypothesis 7 — TTL expiry during a long load test**
-If a load test starts before midnight UTC and runs past it, keys written in the early phase expire. Those conversations vanish from Redis mid-test. The rebuild counts only surviving keys. If DEV and SIT started their load tests at different times relative to UTC midnight, their counts diverge even with identical Mongo data.
-
----
-
-**What I need you to do — go through this in order, do not skip steps:**
-
-**Step 1 — Instrument and expose queue saturation**
-
-Find the exact line where `_enqueue_cdc_conversation()` attempts to add to the async queue. Determine whether this is a blocking `put()` or non-blocking `put_nowait()`. If it is `put_nowait()` or if there is any try/except around the put that swallows a `QueueFull` exception, this is a confirmed silent drop path.
-
-Fix: implement a counter that increments every time an enqueue is skipped or fails due to queue being full. Log this as a WARNING with the conversation ID and current queue size every time it happens. Also expose the current queue depth as a metric that can be observed during load tests.
-
-Additionally, evaluate whether `CDC_QUEUE_MAXSIZE` is appropriately sized for the volume of conversations being generated. If the queue fills in under a second under peak load, increasing the size only delays the problem — the real fix is backpressure: make the watcher block on `put()` with a timeout rather than drop.
-
-**Step 2 — Audit `should_enqueue_cdc_change()` exhaustively**
-
-Print the exact evaluated filter criteria this function uses at service startup for both DEV and SIT. Look for every place it reads from config, environment variables, or feature flags. List every condition that returns False. Add a log line at WARNING level every time this function returns False, including the conversation ID and the specific condition that excluded it. Run a load test and check whether the exclusion rate differs between environments.
-
-**Step 3 — Audit every exception handler in the CDC processing pipeline end-to-end**
-
-Trace the full lifecycle of a conversation ID from the moment it enters the queue to the moment it is confirmed written to Redis and removed from `pending`. For every try/except block in this path — including inside `_flush_cdc_chunk_results()`, `_finalize_cdc_chunk()`, the Redis write methods, and the total metrics update — verify that a caught exception either re-queues the conversation ID or raises and stops processing that chunk. Any `except: pass`, `except: continue`, or `except: log_and_move_on` that does not re-queue is a silent permanent drop. Fix every one of these by adding the conversation ID back to the queue or logging it to a dedicated DROPPED_CONVERSATIONS log that can be monitored.
-
-**Step 4 — Verify Redis write atomicity and hash/string sync**
-
-Find `write_interaction()` and `write_interactions_batch()`. Verify that `SET`, `HSET`, and `EXPIRE` are always executed within the same pipeline and that the pipeline is executed atomically. Find `delete_interactions_batch()`. Verify that `DEL` and `HDEL` are in the same pipeline. If any of these operations can partially succeed — for example, if the pipeline execute call raises after some commands have been sent — add retry logic that retries the entire pipeline, not individual commands. Add a metric or log line if pipeline execution fails after all retries, including which conversation IDs were affected.
-
-**Step 5 — Verify `first_seen_at` assignment and merge correctness**
-
-Find `_merge_with_existing()`. Verify the exact line that sets `first_seen_at` in the merged payload. It must always be `min(existing_first_seen_at, new_first_seen_at)` — never `new_first_seen_at` unconditionally, never the CDC event timestamp. Find where `first_seen_at` is initially assigned during `_build_aggregated_payload()`. Verify it comes from the earliest document timestamp in the conversation's Mongo docs, not from wall clock time or event arrival time. Write a unit test: given two calls to build+merge for the same conversation where the second call has an earlier `first_seen_at` than what's in Redis, the result must keep the earlier value.
-
-**Step 6 — Verify the lock coverage in the 60s rebuild**
-
-Find `schedule_total_metrics_refresh()` and `TotalMetricsManager.rebuild_from_latest_states()`. Map out exactly when `TOTAL_METRICS_LOCK` is acquired relative to when the HSCAN reads begin and when the Redis bucket writes complete. The lock must be held for the entire duration from first HSCAN page to final bucket write. If the lock is acquired only around the write phase, reads from the hash that happened before lock acquisition are unprotected. Fix by acquiring the lock before the first HSCAN call and releasing only after all bucket keys are written.
-
-**Step 7 — Add an end-to-end coverage check to the 60s healing pass**
-
-After the existing total rebuild completes, add the following coverage reconciliation. This runs after every healing pass and is the backstop for any gaps introduced by queue drops, silent exceptions, or CDC delivery gaps:
-
-```python
-async def coverage_reconciliation(self):
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    # Get all conversation IDs currently in Redis hash mirror
-    redis_ids = set(await redis.hkeys(meta_hash_key))
-    
-    # Get all distinct conversation IDs in Mongo for today
-    mongo_ids = set()
-    async for doc in mongo_collection.find(
-        {"createdDateTime": {"$gte": today_start}},
-        {"conversationId": 1, "_id": 0}
-    ):
-        mongo_ids.add(doc["conversationId"])
-    
-    missing_ids = mongo_ids - redis_ids
-    
-    if missing_ids:
-        logger.warning(
-            f"Coverage gap detected: {len(missing_ids)} conversations exist in Mongo "
-            f"but are absent from Redis. Backfilling."
-        )
-        # Reuse existing batch processing — do not write new processing logic
-        await process_conversation_ids_batch(list(missing_ids))
-        # Re-run total rebuild to incorporate backfilled conversations
-        await self.rebuild_from_latest_states()
-    else:
-        logger.info("Coverage check passed: Redis and Mongo conversation sets are aligned.")
-```
-
-Make the coverage reconciliation frequency configurable separately from the rebuild frequency. Default to running it every 5 minutes rather than every 60 seconds, since it involves a Mongo collection scan. Ensure `createdDateTime` is indexed in Mongo — if it is not, this query will be a full collection scan and will be slow under large data volumes.
-
-**Step 8 — Add environment startup diagnostics**
-
-At service startup, after the one-time load completes and before CDC begins, log the following as a structured block so DEV and SIT can be compared side by side:
-
-- `CDC_QUEUE_MAXSIZE`
-- `CDC_BATCH_WINDOW_MS`
-- `CDC_NUM_CONSUMERS`
-- `CDC_MAX_CONCURRENCY`
-- `CDC_MAX_BATCHES_IN_FLIGHT`
-- `CDC_PROCESS_CHUNK_SIZE`
-- `REDIS_WRITE_BATCH_CHUNK_SIZE`
-- `TOTAL_METRICS_REFRESH_SECONDS`
-- The resolved value of every filter condition inside `should_enqueue_cdc_change()`
-- Redis key prefix in use
-- Count of conversations loaded during one-time load
-- Count of distinct conversation IDs in Redis hash mirror after one-time load completes
-
-If any of these values differ between DEV and SIT, that difference is a candidate root cause for diverging totals and must be documented.
-
----
-
-**Definition of done for this task:**
-
-After your changes, the following must be true:
-
-1. Every conversation ID that enters the CDC watcher either ends up in Redis or produces a WARNING log with the specific reason it did not. Silent drops are eliminated.
-2. The 60s healing pass includes a coverage reconciliation that detects and backfills any conversations present in Mongo but absent from Redis.
-3. Startup logs for DEV and SIT can be compared in under 30 seconds to identify any configuration divergence.
-4. If after all these fixes, DEV and SIT still show different `total` counts under heavy load, the gap between `mongo_ids` and `redis_ids` in the coverage check log will be 0 — meaning every Mongo conversation is in Redis — and the only remaining explanation is that CDC delivered different events to different environments, which is a MongoDB-side issue outside our control.
-
-That last point is critical: after this work is done, if divergence persists, we can point to CDC with evidence — specifically that our coverage check shows full Redis/Mongo alignment, meaning our backend processed every conversation it was told about, and any remaining gap is in what CDC told us about.
-
----
+# Separate client for all query operations  
+query_client = MongoClient(
+    uri,
+    maxPoolSize=50,  # sized for your consumer concurrency
+    readPreference="secondaryPreferred"
+)
+3. Connection pool sizing for the query client
+Your CDC consumers do batched Mongo reads — one grouped query per chunk, with CDC_MAX_CONCURRENCY parallel processors and CDC_NUM_CONSUMERS consumer loops. The peak number of simultaneous Mongo connections you need is roughly:
+CDC_NUM_CONSUMERS × CDC_MAX_BATCHES_IN_FLIGHT × (queries per batch)
+If your pool is smaller than this, consumers queue waiting for connections, which backs up the CDC queue, which causes the queue to fill, which causes silent drops. Size the query pool to comfortably exceed this number with headroom
+4. Switch CDC cursor to secondaryPreferred — removes CDC read load from the primary entirely. Only if it's possible and makes sense and can actually be done by the code, or keep this as part of next update 
