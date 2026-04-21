@@ -1,32 +1,109 @@
-1.Reduce or eliminate updateLookup if possible
-full_document: updateLookup is expensive because it does a synchronous document read for every update event, on the critical path of event delivery. You're using it because you want the full document. But consider: your backend immediately discards the attached full document and refetches all docs for the conversation from Mongo anyway.
-If that's the case, you don't need updateLookup at all. You only need the conversationId from the event, which is available in documentKey or fullDocumentBeforeChange without a lookup.
-# Instead of:
-collection.watch(pipeline, full_document="updateLookup")
+Here is a way to improve our system. I'm suggesting a clean, production-grade strategy that will scale to your “500–600 conversations/sec” scenario.
+ High-level architecture
+CDC (light) → buffer → group by conversationId → batch fetch (projected) → process
+Step-by-step strategy
+🔹 1. Keep CDC minimal (only _id)
+JavaScript
+const stream = db.collection.watch([], {
+  fullDocument: "default" // i.e., don't fetch it
+});
+Process events like:
+JavaScript
+stream.on("change", (change) => {
+  buffer.add(change.documentKey._id);
+});
+ At this stage:
+No heavy payloads
+Just IDs flowing through
+🔹 2. Micro-batch _ids (VERY IMPORTANT)
+Don’t process per event.
+Instead:
+Buffer for ~200–500 ms
+Or until N IDs (e.g., 1000)
+Example:
+JavaScript
+setInterval(flushBuffer, 300);
+🔹 3. Batch fetch conversationId (projection)
+JavaScript
+const docs = await db.collection.find(
+  { _id: { $in: batchIds } },
+  { projection: { conversationId: 1 } }
+).toArray();
+ Now you convert:
 
-# Use:
-collection.watch(pipeline, full_document="required")  # only for inserts where full doc is already there
-# or just don't set full_document for updates — you only need the conversationId from documentKey
-This removes the extra read on every update event entirely. At high update volume (VOL doc being updated on every transition) this is a significant reduction in primary read load and event delivery latency.
-2. Use a dedicated connection for the change stream — don't share it with your query pool
-Your MongoDBConnectionPool likely serves both the change stream watcher and the batch document fetch queries that the CDC consumers run. Under heavy load, your consumers are doing large grouped queries (fetch all docs for 50 conversation IDs at once) which consume connection pool slots. If the change stream cursor is competing for connection pool slots with these queries, event delivery slows down.
-Fix: maintain a separate dedicated MongoClient instance exclusively for the change stream cursor. Give it a pool size of 1 — it only needs one connection, but that connection should never be taken away by query traffic.
-# Dedicated client just for CDC
-cdc_client = MongoClient(
-    uri,
-    maxPoolSize=1,
-    minPoolSize=1,
-    readPreference="secondaryPreferred"
-)
+_ids → conversationIds
+🔹 4. Group by conversationId
+JavaScript
+const convMap = new Map();
 
-# Separate client for all query operations  
-query_client = MongoClient(
-    uri,
-    maxPoolSize=50,  # sized for your consumer concurrency
-    readPreference="secondaryPreferred"
-)
-3. Connection pool sizing for the query client
-Your CDC consumers do batched Mongo reads — one grouped query per chunk, with CDC_MAX_CONCURRENCY parallel processors and CDC_NUM_CONSUMERS consumer loops. The peak number of simultaneous Mongo connections you need is roughly:
-CDC_NUM_CONSUMERS × CDC_MAX_BATCHES_IN_FLIGHT × (queries per batch)
-If your pool is smaller than this, consumers queue waiting for connections, which backs up the CDC queue, which causes the queue to fill, which causes silent drops. Size the query pool to comfortably exceed this number with headroom
-4. Switch CDC cursor to secondaryPreferred — removes CDC read load from the primary entirely. Only if it's possible and makes sense and can actually be done by the code, or keep this as part of next update 
+docs.forEach(doc => {
+  if (!convMap.has(doc.conversationId)) {
+    convMap.set(doc.conversationId, []);
+  }
+  convMap.get(doc.conversationId).push(doc._id);
+});
+ Now you have:
+
+conversationId → list of changed docIds
+🔹 5. Fetch ALL docs for those conversations (projection)
+Now the key step:
+JavaScript
+const conversationIds = [...convMap.keys()];
+
+const fullDocs = await db.collection.find(
+  { conversationId: { $in: conversationIds } },
+  {
+    projection: {
+      conversationId: 1,
+      field1: 1,
+      field2: 1
+      // exclude large text
+    }
+  }
+).toArray();
+🔹 6. Group again for processing
+JavaScript
+const grouped = new Map();
+
+fullDocs.forEach(doc => {
+  if (!grouped.has(doc.conversationId)) {
+    grouped.set(doc.conversationId, []);
+  }
+  grouped.get(doc.conversationId).push(doc);
+});
+Now:
+ Each conversationId → all its relevant docs
+ Ready for processing
+ Why this works well
+ 1. CDC stays lightweight
+Only _id flows
+No large document streaming
+2. Batching reduces load massively
+Instead of:
+1000 queries/sec ❌
+You do:
+~3–5 batch queries/sec ✅
+ 3. Projection keeps fetch cheap
+Only small fields
+Avoids your 20–60KB text blobs
+4. Natural deduplication
+If multiple changes happen to same conversation in 300ms:
+They collapse into one processing unit
+Huge efficiency gain
+
+Important points:
+1. Deduplicate accurately ,no faulty per conversation issues
+2. Cap batch size , for now say 5k per query
+3. Parallelise safely: You can run:
+2–4 batch processors in parallel
+But avoid:
+uncontrolled concurrency
+4.Backpressure handling
+If processing lags:
+pause change stream:
+JavaScript
+stream.pause();
+// process backlog
+stream.resume();
+
+Make these changes only for when CDC starts,arrange for that, as initial load is happening fine right now
