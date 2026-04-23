@@ -1,109 +1,812 @@
-Here is a way to improve our system. I'm suggesting a clean, production-grade strategy that will scale to your “500–600 conversations/sec” scenario.
- High-level architecture
-CDC (light) → buffer → group by conversationId → batch fetch (projected) → process
-Step-by-step strategy
-🔹 1. Keep CDC minimal (only _id)
-JavaScript
-const stream = db.collection.watch([], {
-  fullDocument: "default" // i.e., don't fetch it
-});
-Process events like:
-JavaScript
-stream.on("change", (change) => {
-  buffer.add(change.documentKey._id);
-});
- At this stage:
-No heavy payloads
-Just IDs flowing through
-🔹 2. Micro-batch _ids (VERY IMPORTANT)
-Don’t process per event.
-Instead:
-Buffer for ~200–500 ms
-Or until N IDs (e.g., 1000)
-Example:
-JavaScript
-setInterval(flushBuffer, 300);
-🔹 3. Batch fetch conversationId (projection)
-JavaScript
-const docs = await db.collection.find(
-  { _id: { $in: batchIds } },
-  { projection: { conversationId: 1 } }
-).toArray();
- Now you convert:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CDC Batch Pipeline Diagram</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-_ids → conversationIds
-🔹 4. Group by conversationId
-JavaScript
-const convMap = new Map();
-
-docs.forEach(doc => {
-  if (!convMap.has(doc.conversationId)) {
-    convMap.set(doc.conversationId, []);
+  :root {
+    --color-background-primary:   #ffffff;
+    --color-background-secondary: #f5f4f0;
+    --color-background-tertiary:  #eeedea;
+    --color-text-primary:         #1a1a18;
+    --color-text-secondary:       #5f5e5a;
+    --color-border-tertiary:      rgba(0,0,0,0.12);
+    --color-border-secondary:     rgba(0,0,0,0.22);
+    --color-border-primary:       rgba(0,0,0,0.35);
+    --font-sans: system-ui, -apple-system, sans-serif;
+    --font-mono: "Menlo", "Consolas", monospace;
+    --border-radius-md: 8px;
+    --border-radius-lg: 12px;
   }
-  convMap.get(doc.conversationId).push(doc._id);
-});
- Now you have:
 
-conversationId → list of changed docIds
-🔹 5. Fetch ALL docs for those conversations (projection)
-Now the key step:
-JavaScript
-const conversationIds = [...convMap.keys()];
-
-const fullDocs = await db.collection.find(
-  { conversationId: { $in: conversationIds } },
-  {
-    projection: {
-      conversationId: 1,
-      field1: 1,
-      field2: 1
-      // exclude large text
-    }
+  body {
+    font-family: var(--font-sans);
+    background: #f0efe9;
+    color: var(--color-text-primary);
+    padding: 24px 16px;
+    min-height: 100vh;
   }
-).toArray();
-🔹 6. Group again for processing
-JavaScript
-const grouped = new Map();
 
-fullDocs.forEach(doc => {
-  if (!grouped.has(doc.conversationId)) {
-    grouped.set(doc.conversationId, []);
+  h1 {
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--color-text-primary);
+    margin-bottom: 4px;
   }
-  grouped.get(doc.conversationId).push(doc);
-});
-Now:
- Each conversationId → all its relevant docs
- Ready for processing
- Why this works well
- 1. CDC stays lightweight
-Only _id flows
-No large document streaming
-2. Batching reduces load massively
-Instead of:
-1000 queries/sec ❌
-You do:
-~3–5 batch queries/sec ✅
- 3. Projection keeps fetch cheap
-Only small fields
-Avoids your 20–60KB text blobs
-4. Natural deduplication
-If multiple changes happen to same conversation in 300ms:
-They collapse into one processing unit
-Huge efficiency gain
+  .subtitle {
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    margin-bottom: 20px;
+  }
 
-Important points:
-1. Deduplicate accurately ,no faulty per conversation issues
-2. Cap batch size , for now say 5k per query
-3. Parallelise safely: You can run:
-2–4 batch processors in parallel
-But avoid:
-uncontrolled concurrency
-4.Backpressure handling
-If processing lags:
-pause change stream:
-JavaScript
-stream.pause();
-// process backlog
-stream.resume();
+  .card {
+    background: var(--color-background-primary);
+    border: 0.5px solid var(--color-border-tertiary);
+    border-radius: var(--border-radius-lg);
+    padding: 20px;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
 
-Make these changes only for when CDC starts,arrange for that, as initial load is happening fine right now
+  .tab-bar { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tab-btn {
+    padding: 6px 14px; font-size: 13px; border-radius: var(--border-radius-md);
+    border: 0.5px solid var(--color-border-secondary); background: transparent;
+    color: var(--color-text-secondary); cursor: pointer; transition: all .15s;
+    font-family: var(--font-sans);
+  }
+  .tab-btn.active {
+    background: var(--color-background-secondary);
+    color: var(--color-text-primary); border-color: var(--color-border-primary);
+    font-weight: 500;
+  }
+  .tab-btn:hover { background: var(--color-background-secondary); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* SVG light-mode classes */
+  .t  { font-family: var(--font-sans); font-size: 14px; font-weight: 400; fill: #1a1a18; }
+  .ts { font-family: var(--font-sans); font-size: 12px; font-weight: 400; fill: #5f5e5a; }
+  .th { font-family: var(--font-sans); font-size: 14px; font-weight: 500; fill: #1a1a18; }
+
+  /* c-blue */
+  .c-blue rect, .c-blue circle { fill: #E6F1FB; stroke: #185FA5; }
+  .c-blue .th { fill: #0C447C; }
+  .c-blue .ts { fill: #185FA5; }
+  /* c-teal */
+  .c-teal rect, .c-teal circle { fill: #E1F5EE; stroke: #0F6E56; }
+  .c-teal .th { fill: #085041; }
+  .c-teal .ts { fill: #0F6E56; }
+  /* c-purple */
+  .c-purple rect, .c-purple circle { fill: #EEEDFE; stroke: #534AB7; }
+  .c-purple .th { fill: #3C3489; }
+  .c-purple .ts { fill: #534AB7; }
+  /* c-amber */
+  .c-amber rect, .c-amber circle { fill: #FAEEDA; stroke: #854F0B; }
+  .c-amber .th { fill: #633806; }
+  .c-amber .ts { fill: #854F0B; }
+  /* c-coral */
+  .c-coral rect, .c-coral circle { fill: #FAECE7; stroke: #993C1D; }
+  .c-coral .th { fill: #712B13; }
+  .c-coral .ts { fill: #993C1D; }
+  /* c-green */
+  .c-green rect { fill: #EAF3DE; stroke: #3B6D11; }
+  .c-green .th { fill: #27500A; }
+  .c-green .ts { fill: #3B6D11; }
+
+  .arr { stroke: #888780; stroke-width: 1.5; fill: none; }
+
+  .flow-wrap { overflow-x: auto; padding-bottom: 8px; }
+  .flow-svg { display: block; }
+
+  /* Schema cards */
+  .schema-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+    gap: 10px;
+  }
+  .scard {
+    border: 0.5px solid var(--color-border-tertiary);
+    border-radius: var(--border-radius-lg);
+    padding: 12px 14px;
+    background: var(--color-background-primary);
+  }
+  .scard-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .scard-badge {
+    font-size: 11px; font-weight: 500; padding: 2px 7px;
+    border-radius: 99px; white-space: nowrap;
+  }
+  .badge-mongo   { background:#E6F1FB; color:#0C447C; }
+  .badge-queue   { background:#E1F5EE; color:#085041; }
+  .badge-worker  { background:#EEEDFE; color:#3C3489; }
+  .badge-redis   { background:#FAEEDA; color:#633806; }
+  .badge-totals  { background:#FAECE7; color:#712B13; }
+  .scard-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+  .scard-body { font-size: 12px; color: var(--color-text-secondary); line-height: 1.6; }
+  .scard-body code {
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--color-background-secondary);
+    padding: 1px 4px; border-radius: 3px; color: var(--color-text-primary);
+  }
+  .scard-body strong { font-weight: 500; color: var(--color-text-primary); }
+  .schema-block {
+    margin-top: 7px;
+    background: var(--color-background-secondary);
+    border-radius: var(--border-radius-md);
+    padding: 8px 10px;
+    font-size: 11px; font-family: var(--font-mono);
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .key-field { color: var(--color-text-primary); font-weight: 500; }
+  .opt-field { opacity: .7; }
+  .example-tag {
+    display: inline-block; margin-top: 6px;
+    font-size: 11px; background: var(--color-background-tertiary);
+    border-radius: 4px; padding: 2px 6px;
+    color: var(--color-text-secondary);
+  }
+
+  /* Swimlane */
+  .swimlane-wrap { overflow-x: auto; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:12px; font-size:12px; color:var(--color-text-secondary); align-items:center; }
+  .leg-dot { width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:4px; }
+  .leg-blue   { background:#85B7EB; }
+  .leg-purple { background:#AFA9EC; }
+  .leg-amber  { background:#FAC775; }
+  .leg-teal   { background:#5DCAA5; }
+  .leg-coral  { background:#F0997B; }
+
+  /* swimlane SVG inline classes - same as above but scoped */
+  #tab-lane .th { font-family: var(--font-sans); font-size: 12px; font-weight: 500; fill: #1a1a18; }
+  #tab-lane .ts { font-family: var(--font-sans); font-size: 11px; font-weight: 400; fill: #5f5e5a; }
+</style>
+</head>
+<body>
+
+<div style="max-width:1600px;margin:0 auto;">
+  <h1>CDC Batch Pipeline</h1>
+  <p class="subtitle">One complete CDC batch — from 100 MongoDB change events to Redis latest-state and total metrics update</p>
+
+  <div class="card">
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('flow',this)">① Main batch flow</button>
+      <button class="tab-btn" onclick="switchTab('schema',this)">② Schema cards</button>
+      <button class="tab-btn" onclick="switchTab('lane',this)">③ Swimlane / concurrency</button>
+    </div>
+
+    <!-- ═══════════════ TAB 1: MAIN FLOW ═══════════════ -->
+    <div id="tab-flow" class="tab-panel active">
+      <div class="flow-wrap">
+<svg class="flow-svg" width="100%" viewBox="0 0 1560 740" role="img">
+<title>CDC batch main flow — 12 stages</title>
+<desc>Left-to-right then wrap flowchart of one CDC batch through MongoDB change stream, ID extraction, queues, batch windows, projected lookups, conversation aggregation, Redis writes, and total metrics update.</desc>
+<defs>
+  <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- ── ROW 1: stages 1–6 ── -->
+<!-- ① -->
+<text x="20" y="36" font-size="10" fill="#888780" font-family="system-ui,sans-serif">①</text>
+<g class="c-blue">
+  <rect x="20" y="40" width="190" height="68" rx="8" stroke-width="0.5"/>
+  <text class="th" x="115" y="68" text-anchor="middle" dominant-baseline="central">Mongo change stream</text>
+  <text class="ts" x="115" y="90" text-anchor="middle" dominant-baseline="central">Emits CDC events (insert/update/replace)</text>
+</g>
+<text font-size="11" x="214" y="72" fill="#185FA5" font-family="system-ui,sans-serif">ChangeEvent</text>
+<text font-size="11" x="214" y="86" fill="#185FA5" font-family="system-ui,sans-serif">key: documentKey._id</text>
+<line x1="210" y1="74" x2="278" y2="74" stroke="#378ADD" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+
+<!-- ② -->
+<text x="280" y="36" font-size="10" fill="#888780" font-family="system-ui,sans-serif">②</text>
+<g class="c-blue">
+  <rect x="280" y="40" width="160" height="68" rx="8" stroke-width="0.5"/>
+  <text class="th" x="360" y="66" text-anchor="middle" dominant-baseline="central">Filter + extract</text>
+  <text class="ts" x="360" y="82" text-anchor="middle" dominant-baseline="central">document_id</text>
+  <text class="ts" x="360" y="97" text-anchor="middle" dominant-baseline="central">lightweight step</text>
+</g>
+<text font-size="11" x="452" y="68" fill="#185FA5" font-family="system-ui,sans-serif">document_id</text>
+<line x1="440" y1="74" x2="498" y2="74" stroke="#378ADD" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+
+<!-- ③ queue -->
+<text x="500" y="42" font-size="10" fill="#888780" font-family="system-ui,sans-serif">③</text>
+<g class="c-teal">
+  <rect x="500" y="46" width="130" height="54" rx="8" stroke-width="0.5" stroke-dasharray="4 3"/>
+  <text class="th" x="565" y="70" text-anchor="middle" dominant-baseline="central">change_queue</text>
+  <text class="ts" x="565" y="88" text-anchor="middle" dominant-baseline="central">set of document_ids</text>
+</g>
+<line x1="630" y1="74" x2="688" y2="74" stroke="#1D9E75" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+
+<!-- ④ -->
+<text x="690" y="32" font-size="10" fill="#888780" font-family="system-ui,sans-serif">④</text>
+<g class="c-purple">
+  <rect x="690" y="36" width="175" height="76" rx="8" stroke-width="0.5"/>
+  <text class="th" x="778" y="62" text-anchor="middle" dominant-baseline="central">Collect _id batch</text>
+  <text class="ts" x="778" y="78" text-anchor="middle" dominant-baseline="central">100ms collection window</text>
+  <text class="ts" x="778" y="94" text-anchor="middle" dominant-baseline="central">→ batch of 100 doc ids</text>
+</g>
+<rect x="692" y="118" width="171" height="18" rx="3" fill="#EEEDFE" stroke="none"/>
+<text x="778" y="130" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#3C3489" font-family="system-ui,sans-serif">⏱ collection window only</text>
+<text font-size="11" x="870" y="68" fill="#534AB7" font-family="system-ui,sans-serif">DocumentIdBatch</text>
+<line x1="865" y1="74" x2="918" y2="74" stroke="#7F77DD" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+
+<!-- ⑤ -->
+<text x="920" y="32" font-size="10" fill="#888780" font-family="system-ui,sans-serif">⑤</text>
+<g class="c-purple">
+  <rect x="920" y="36" width="200" height="76" rx="8" stroke-width="0.5"/>
+  <text class="th" x="1020" y="60" text-anchor="middle" dominant-baseline="central">Projected _id → convId</text>
+  <text class="ts" x="1020" y="76" text-anchor="middle" dominant-baseline="central">lookup</text>
+  <text class="ts" x="1020" y="92" text-anchor="middle" dominant-baseline="central">find({_id:$in}, {_id,convId})</text>
+</g>
+<rect x="922" y="118" width="196" height="18" rx="3" fill="#EEEDFE" stroke="none"/>
+<text x="1020" y="130" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#3C3489" font-family="system-ui,sans-serif">projected (no details field)</text>
+<text font-size="11" x="1125" y="68" fill="#534AB7" font-family="system-ui,sans-serif">LookupRows</text>
+<line x1="1120" y1="74" x2="1178" y2="74" stroke="#7F77DD" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+
+<!-- ⑥ queue -->
+<text x="1180" y="42" font-size="10" fill="#888780" font-family="system-ui,sans-serif">⑥</text>
+<g class="c-teal">
+  <rect x="1180" y="46" width="155" height="54" rx="8" stroke-width="0.5" stroke-dasharray="4 3"/>
+  <text class="th" x="1258" y="68" text-anchor="middle" dominant-baseline="central">conversation_queue</text>
+  <text class="ts" x="1258" y="86" text-anchor="middle" dominant-baseline="central">set of conversationIds</text>
+</g>
+
+<!-- example row -->
+<rect x="20" y="155" width="520" height="50" rx="6" fill="none" stroke="#C0DD97" stroke-width="0.5"/>
+<text font-size="11" x="28" y="171" fill="#3B6D11" font-family="system-ui,sans-serif">Example — 100 events arrive:</text>
+<text font-size="11" x="28" y="187" fill="#27500A" font-family="Menlo,Consolas,monospace">doc1…doc100  →  batch (100ms)  →  lookup: doc1→c1, …, doc100→c100</text>
+<text font-size="11" x="28" y="199" fill="#27500A" font-family="Menlo,Consolas,monospace">conversationIds: {c1, c2, …, c100}</text>
+
+<!-- Wrap connector stage 6 → stage 7 -->
+<line x1="1258" y1="100" x2="1258" y2="226" stroke="#1D9E75" stroke-width="1" fill="none"/>
+<path d="M1258 226 L1258 248 L1460 248 L1460 226" stroke="#1D9E75" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+<text font-size="11" x="1340" y="242" fill="#0F6E56" font-family="system-ui,sans-serif">conversationId set</text>
+
+<!-- ── ROW 2: stages 7–12 ── -->
+
+<!-- ⑦ -->
+<text x="1350" y="258" font-size="10" fill="#888780" font-family="system-ui,sans-serif">⑦</text>
+<g class="c-purple">
+  <rect x="1352" y="262" width="185" height="76" rx="8" stroke-width="0.5"/>
+  <text class="th" x="1445" y="288" text-anchor="middle" dominant-baseline="central">Collect conv. batch</text>
+  <text class="ts" x="1445" y="304" text-anchor="middle" dominant-baseline="central">100ms collection window</text>
+  <text class="ts" x="1445" y="320" text-anchor="middle" dominant-baseline="central">→ {c1…c100} batch</text>
+</g>
+<rect x="1354" y="344" width="181" height="18" rx="3" fill="#EEEDFE" stroke="none"/>
+<text x="1445" y="356" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#3C3489" font-family="system-ui,sans-serif">⏱ collection window only</text>
+
+<!-- ⑦ → ⑧a/b -->
+<path d="M1352 300 L1282 300 L1282 422 L1180 422" stroke="#7F77DD" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+<text font-size="11" x="1290" y="358" fill="#534AB7" font-family="system-ui,sans-serif">ConversationChunk</text>
+<text font-size="11" x="1290" y="372" fill="#534AB7" font-family="system-ui,sans-serif">c1…c100</text>
+
+<!-- ⑧a -->
+<text x="950" y="380" font-size="10" fill="#888780" font-family="system-ui,sans-serif">⑧a</text>
+<g class="c-purple">
+  <rect x="952" y="384" width="225" height="82" rx="8" stroke-width="0.5"/>
+  <text class="th" x="1065" y="410" text-anchor="middle" dominant-baseline="central">Fetch projected conv. docs</text>
+  <text class="ts" x="1065" y="426" text-anchor="middle" dominant-baseline="central">all docs per conversationId</text>
+  <text class="ts" x="1065" y="442" text-anchor="middle" dominant-baseline="central">no details, no _id field</text>
+  <text class="ts" x="1065" y="458" text-anchor="middle" dominant-baseline="central">→ DocsByConversation map</text>
+</g>
+<rect x="954" y="472" width="221" height="18" rx="3" fill="#EEEDFE" stroke="none"/>
+<text x="1065" y="484" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#3C3489" font-family="system-ui,sans-serif">projected (details excluded)</text>
+
+<!-- ⑧b -->
+<text x="952" y="504" font-size="10" fill="#888780" font-family="system-ui,sans-serif">⑧b</text>
+<g class="c-amber">
+  <rect x="952" y="508" width="225" height="64" rx="8" stroke-width="0.5"/>
+  <text class="th" x="1065" y="532" text-anchor="middle" dominant-baseline="central">Read existing Redis state</text>
+  <text class="ts" x="1065" y="548" text-anchor="middle" dominant-baseline="central">latest-state for same convs.</text>
+  <text class="ts" x="1065" y="562" text-anchor="middle" dominant-baseline="central">→ ExistingLatestStateMap</text>
+</g>
+
+<!-- ⑧a + ⑧b → ⑨ -->
+<line x1="952" y1="458" x2="890" y2="458" stroke="#7F77DD" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+<line x1="952" y1="540" x2="890" y2="540" stroke="#BA7517" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+<path d="M890 458 L862 458 L862 504 L780 504" stroke="#888780" stroke-width="1" fill="none"/>
+<path d="M890 540 L862 540 L862 504" stroke="#888780" stroke-width="1" fill="none"/>
+
+<!-- ⑨ -->
+<text x="570" y="450" font-size="10" fill="#888780" font-family="system-ui,sans-serif">⑨</text>
+<g class="c-purple">
+  <rect x="572" y="454" width="205" height="100" rx="8" stroke-width="1.5"/>
+  <text class="th" x="675" y="480" text-anchor="middle" dominant-baseline="central">Rebuild latest state</text>
+  <text class="ts" x="675" y="496" text-anchor="middle" dominant-baseline="central">per conversation</text>
+  <text class="ts" x="675" y="512" text-anchor="middle" dominant-baseline="central">main business logic</text>
+  <text class="ts" x="675" y="528" text-anchor="middle" dominant-baseline="central">merge new + existing state</text>
+  <text class="ts" x="675" y="544" text-anchor="middle" dominant-baseline="central">→ LatestConversationState ×100</text>
+</g>
+<text font-size="11" x="504" y="498" fill="#534AB7" font-family="system-ui,sans-serif">WritesMap</text>
+<line x1="572" y1="504" x2="500" y2="504" stroke="#7F77DD" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+
+<!-- ⑩ -->
+<text x="330" y="460" font-size="10" fill="#888780" font-family="system-ui,sans-serif">⑩</text>
+<g class="c-amber">
+  <rect x="332" y="464" width="165" height="82" rx="8" stroke-width="0.5"/>
+  <text class="th" x="415" y="490" text-anchor="middle" dominant-baseline="central">Write latest-state</text>
+  <text class="ts" x="415" y="506" text-anchor="middle" dominant-baseline="central">to Redis</text>
+  <text class="ts" x="415" y="522" text-anchor="middle" dominant-baseline="central">SET key + HSET meta hash</text>
+  <text class="ts" x="415" y="538" text-anchor="middle" dominant-baseline="central">→ visible to backend now</text>
+</g>
+<rect x="334" y="552" width="161" height="18" rx="3" fill="#FAEEDA" stroke="none"/>
+<text x="415" y="564" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#633806" font-family="system-ui,sans-serif">writes before totals update</text>
+<text font-size="11" x="254" y="498" fill="#633806" font-family="system-ui,sans-serif">TotalsDelta</text>
+<line x1="332" y1="505" x2="250" y2="505" stroke="#BA7517" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+
+<!-- ⑪ queue -->
+<text x="80" y="477" font-size="10" fill="#888780" font-family="system-ui,sans-serif">⑪</text>
+<g class="c-teal">
+  <rect x="82" y="481" width="165" height="54" rx="8" stroke-width="0.5" stroke-dasharray="4 3"/>
+  <text class="th" x="165" y="504" text-anchor="middle" dominant-baseline="central">Queue totals delta</text>
+  <text class="ts" x="165" y="521" text-anchor="middle" dominant-baseline="central">prev + curr + deleted states</text>
+</g>
+<line x1="165" y1="535" x2="165" y2="584" stroke="#1D9E75" stroke-width="1" fill="none" marker-end="url(#arr)"/>
+<text font-size="11" x="172" y="564" fill="#0F6E56" font-family="system-ui,sans-serif">TotalsProcessingInput</text>
+
+<!-- ⑫ -->
+<text x="60" y="584" font-size="10" fill="#888780" font-family="system-ui,sans-serif">⑫</text>
+<g class="c-coral">
+  <rect x="62" y="588" width="205" height="96" rx="8" stroke-width="0.5"/>
+  <text class="th" x="165" y="614" text-anchor="middle" dominant-baseline="central">Update total metrics</text>
+  <text class="ts" x="165" y="630" text-anchor="middle" dominant-baseline="central">bucket update</text>
+  <text class="ts" x="165" y="646" text-anchor="middle" dominant-baseline="central">subtract prev + add curr</text>
+  <text class="ts" x="165" y="662" text-anchor="middle" dominant-baseline="central">finalize avgs, distributions</text>
+  <text class="ts" x="165" y="678" text-anchor="middle" dominant-baseline="central">→ TotalMetricsBucket ×N</text>
+</g>
+<rect x="64" y="690" width="201" height="18" rx="3" fill="#FAECE7" stroke="none"/>
+<text x="165" y="702" text-anchor="middle" dominant-baseline="central" font-size="10" fill="#712B13" font-family="system-ui,sans-serif">derived from latest-state, not raw docs</text>
+
+<!-- outputs summary -->
+<rect x="340" y="596" width="390" height="60" rx="6" fill="none" stroke="#C0DD97" stroke-width="0.5"/>
+<text font-size="11" x="350" y="614" fill="#3B6D11" font-family="system-ui,sans-serif">Final outputs from one CDC batch:</text>
+<text font-size="11" x="350" y="630" fill="#27500A" font-family="Menlo,Consolas,monospace">100 LatestConversationState payloads → Redis</text>
+<text font-size="11" x="350" y="646" fill="#27500A" font-family="Menlo,Consolas,monospace">Updated TotalMetricsBuckets per market/timespan</text>
+
+</svg>
+      </div>
+    </div>
+
+    <!-- ═══════════════ TAB 2: SCHEMA CARDS ═══════════════ -->
+    <div id="tab-schema" class="tab-panel">
+      <div class="schema-grid">
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-mongo">① Mongo</span>
+            <span class="scard-title">Change stream output</span>
+          </div>
+          <div class="scard-body">MongoDB emits one event per changed document. The pipeline uses only <code>documentKey._id</code> as its primary input — <strong>not</strong> the full source document.</div>
+          <div class="schema-block"><span class="key-field">ChangeEvent {</span>
+  _id:            ResumeToken
+  operationType:  "insert"|"update"|"replace"
+  documentKey: {
+    <span class="key-field">_id: ObjectId|string  ← key input</span>
+    <span class="opt-field">conversationId?: string  ← optional hint</span>
+  }
+  <span class="opt-field">updateDescription?: { updatedFields? }
+  clusterTime?:   BSON timestamp
+  wallTime?:      datetime</span>
+<span class="key-field">}</span></div>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-mongo">② Filter</span>
+            <span class="scard-title">CapturedDocumentChange</span>
+          </div>
+          <div class="scard-body">Lightweight record extracted from the CDC event. The main value is <code>document_id</code>. Everything else is metadata for debugging.</div>
+          <div class="schema-block"><span class="key-field">CapturedDocumentChange {</span>
+  <span class="key-field">document_id:    ObjectId|string  ← required</span>
+  operation_type: string           ← required
+  <span class="opt-field">conversation_id_hint?: string
+  updated_fields?:      list[str]
+  cluster_time?:        ISO8601
+  wall_time?:           ISO8601</span>
+<span class="key-field">}</span></div>
+          <span class="example-tag">100 events → 100 document_ids</span>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-queue">③ Queue</span>
+            <span class="scard-title">change_queue internal state</span>
+          </div>
+          <div class="scard-body">Holds document IDs waiting for resolver batching. Tracks which IDs are already in-flight vs which changed again while a resolve is running.</div>
+          <div class="schema-block"><span class="key-field">Queue item:  document_id</span>
+
+Internal state:
+  queued_document_ids: set[id]
+    ← already queued or resolving
+  dirty_document_ids:  set[id]
+    ← changed again during resolve</div>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-worker">④ Worker</span>
+            <span class="scard-title">DocumentIdBatch</span>
+          </div>
+          <div class="scard-body">Resolver worker waits up to 100ms after the first ID arrives to collect nearby IDs into one batch. This is a <em>local collection window</em>, not a global pause.</div>
+          <div class="schema-block"><span class="key-field">DocumentIdBatch {</span>
+  batch_opened_at: ISO8601
+  batch_closed_at: ISO8601
+  <span class="key-field">document_ids:    set[ObjectId]</span>
+  batch_size:      integer
+<span class="key-field">}</span></div>
+          <span class="example-tag">batch_size=100, ids={doc1…doc100}</span>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-worker">⑤ Lookup</span>
+            <span class="scard-title">Projected _id → conversationId</span>
+          </div>
+          <div class="scard-body">Single projected Mongo query. Only fetches <code>_id</code> and <code>conversationId</code>. Enforces customer-scope filter. Returns a map from doc IDs to conversation IDs.</div>
+          <div class="schema-block">Query:
+  find(
+    {_id: {$in: [...]}, customerId},
+    {_id: 1, conversationId: 1}  ← projected
+  )
+
+LookupRow { _id, conversationId }
+
+<span class="key-field">DocumentConversationMap {</span>
+  by_conversation: map[convId → set[id]]
+  resolved_document_ids:   set[id]
+  unresolved_document_ids: set[id]
+<span class="key-field">}</span></div>
+          <span class="example-tag">doc1→c1, doc2→c2, …, doc100→c100</span>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-queue">⑥ Queue</span>
+            <span class="scard-title">conversation_queue internal state</span>
+          </div>
+          <div class="scard-body">Holds conversation IDs ready for business aggregation. Same two-set pattern as the change queue.</div>
+          <div class="schema-block"><span class="key-field">Queue item:  conversation_id</span>
+
+Internal state:
+  pending: set[convId]
+    ← queued or currently rebuilding
+  dirty:   set[convId]
+    ← changed again during rebuild</div>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-worker">⑦ Worker</span>
+            <span class="scard-title">ConversationBatch / Chunk</span>
+          </div>
+          <div class="scard-body">Conversation worker collects IDs for up to 100ms then splits into chunks for parallel processing. With chunk size ≥100 this example stays as one chunk.</div>
+          <div class="schema-block"><span class="key-field">ConversationBatch {</span>
+  batch_opened_at: ISO8601
+  batch_closed_at: ISO8601
+  conversation_ids: set[str]
+  batch_size: integer
+<span class="key-field">}</span>
+
+<span class="key-field">ConversationChunk {</span>
+  conversation_ids: set[str]
+  chunk_size: integer
+<span class="key-field">}</span></div>
+          <span class="example-tag">1 chunk of 100 conversations</span>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-worker">⑧a Fetch</span>
+            <span class="scard-title">ProjectedConversationDoc</span>
+          </div>
+          <div class="scard-body">Fetches <em>all documents</em> for each conversation — not just the one that changed. <code>details</code> and <code>_id</code> are explicitly excluded.</div>
+          <div class="schema-block"><span class="key-field">ProjectedConversationDoc {</span>
+  conversationId:         string
+  market?:                string
+  region?:                string
+  conversationType?:      string
+  conversationStatus?:    list[map]
+  interactionStatus?:     list[map]
+  createdDateTime?:       ISO8601
+  lastModifiedDateTime?:  ISO8601
+  timeStamp?:             ISO8601
+  organization?:          string
+  channel?:               list
+  intent?:                list|string
+  sentiment?:             list|string
+  <span class="opt-field">← details: EXCLUDED
+  ← _id:     EXCLUDED</span>
+<span class="key-field">}</span>
+
+DocsByConversation:
+  map[convId → list[ProjectedDoc]]</div>
+          <span class="example-tag">c1→[docs…], …, c100→[docs…]</span>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-redis">⑧b Redis read</span>
+            <span class="scard-title">ExistingLatestStateMap</span>
+          </div>
+          <div class="scard-body">Before rebuilding, reads the current stored state from Redis so the aggregation can merge old and new data.</div>
+          <div class="schema-block">Redis key pattern:
+  &lt;root&gt;:&lt;prefix&gt;:&lt;conversationId&gt;
+
+<span class="key-field">ExistingLatestStateMap {</span>
+  map[convId → LatestConversationState|null]
+<span class="key-field">}</span></div>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-worker">⑨ Aggregation</span>
+            <span class="scard-title">LatestConversationState</span>
+          </div>
+          <div class="scard-body">Main business logic. Combines projected docs + existing Redis state into one payload per conversation. Integer flags, ISO8601 timestamps, float durations.</div>
+          <div class="schema-block"><span class="key-field">LatestConversationState {</span>
+  conversationId, market?, region?
+  first_seen_at, last_seen_at  ← ISO8601
+  conversation_type?, conversation_state?
+  active_layer?, starting_layer?
+  sentiment?, intent?: list[str]
+  latest_intent?: str
+  visited_layers?, channel_path?
+  <span class="key-field">-- integer flags (not booleans) --</span>
+  conversation_closed_ind: int
+  conversation_in_queue: int
+  bot_in_progress, ivr_in_progress
+  genesys_in_progress, bot_closed
+  ivr_closed, genesys_closed
+  voicebot_to_voiceagent: int  …
+  <span class="key-field">-- float durations --</span>
+  conversation_handling_time: float
+  interaction_handling_time: float
+  genesys_handling_time: float
+  bot_handling_time, ivr_handling_time
+<span class="key-field">}</span></div>
+          <span class="example-tag">100 payloads built</span>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-redis">⑩ Redis write</span>
+            <span class="scard-title">PersistedLatestStateBatch</span>
+          </div>
+          <div class="scard-body">Writes each conversation as both a standalone key (with TTL) and a hash entry. This is the moment the new state becomes visible to the rest of the backend.</div>
+          <div class="schema-block">Redis commands per conversation:
+  SET  &lt;root&gt;:&lt;pfx&gt;:&lt;convId&gt; &lt;json&gt; EX &lt;ttl&gt;
+  HSET &lt;root&gt;:&lt;pfx&gt;:__meta__:conversations
+       &lt;convId&gt; &lt;json&gt;
+  EXPIRE &lt;root&gt;:&lt;pfx&gt;:__meta__:conversations
+
+<span class="key-field">PersistedLatestStateBatch {</span>
+  written_conversation_ids: list[str]
+  deleted_conversation_ids?: list[str]
+  write_count: integer
+<span class="key-field">}</span></div>
+          <span class="example-tag">100 keys written</span>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-queue">⑪ Queue</span>
+            <span class="scard-title">TotalsDeltaEvent</span>
+          </div>
+          <div class="scard-body">Decouples the latest-state write from the totals update. The delta carries before/after snapshots so the totals worker can subtract old contributions and add new ones.</div>
+          <div class="schema-block"><span class="key-field">TotalsDeltaEvent {</span>
+  previous_states: map[convId → State|null]
+  current_states:  map[convId → State|null]
+  deleted_states:  map[convId → State|null]
+<span class="key-field">}</span></div>
+        </div>
+
+        <div class="scard">
+          <div class="scard-head">
+            <span class="scard-badge badge-totals">⑫ Totals</span>
+            <span class="scard-title">TotalMetricsBucket</span>
+          </div>
+          <div class="scard-body">Totals are <em>derived from latest-state payloads</em>, never from raw Mongo docs. Steps: read bucket → subtract prev → add current → finalise averages, distributions, percentages → write back.</div>
+          <div class="schema-block"><span class="key-field">TotalMetricsBucket {</span>
+  bucket_key, market, timespan
+  window_position: "CUR"|"PREV"
+  window_start, window_end: ISO8601
+  total, in_progress_card, closed_card
+  new_card, total_voice_new, total_chat_new
+  total_ended_by_system
+  total_ended_by_customer
+  in_queue, contained_wise_closed_card
+  total_voice, total_chat
+  average_agent_time:    float
+  average_ivr_time:      float
+  average_bot_time:      float
+  average_handling_time: float
+  intent_distribution:       map[str→float]
+  sentiment_distribution:    map[str→float]
+  transfer_distribution:     map[str→float|null]
+  containment_distribution:  map[str→float|null]
+  channel_distribution:      map[str→float|null]
+  percentage_change:         map[str→float]
+  voice_timeline: list[{timestamp,calls_started}]
+  chat_timeline:  list[{timestamp,calls_started}]
+<span class="key-field">}</span></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ═══════════════ TAB 3: SWIMLANE ═══════════════ -->
+    <div id="tab-lane" class="tab-panel">
+      <div class="legend">
+        <span><span class="leg-dot leg-blue"></span>Mongo / external</span>
+        <span><span class="leg-dot leg-purple"></span>Resolver workers</span>
+        <span><span class="leg-dot leg-teal"></span>Queues (waiting lines)</span>
+        <span><span class="leg-dot leg-amber"></span>Conversation workers</span>
+        <span><span class="leg-dot leg-coral"></span>Totals worker</span>
+      </div>
+      <div class="swimlane-wrap">
+<svg width="100%" viewBox="0 0 1480 640" role="img">
+<title>Swimlane: Resolver Workers, Conversation Workers, and Totals Worker separated by queues</title>
+<desc>Horizontal swimlane showing three worker types and two queue boundaries.</desc>
+<defs>
+  <marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<rect x="0" y="30"  width="1480" height="110" fill="#E6F1FB" opacity="0.4"/>
+<rect x="0" y="150" width="1480" height="100" fill="#EEEDFE" opacity="0.4"/>
+<rect x="0" y="260" width="1480" height="160" fill="#FAEEDA" opacity="0.3"/>
+<rect x="0" y="430" width="1480" height="100" fill="#FAECE7" opacity="0.3"/>
+
+<text x="10" y="88"  font-size="12" font-weight="500" fill="#185FA5" font-family="system-ui,sans-serif">Mongo /</text>
+<text x="10" y="104" font-size="12" font-weight="500" fill="#185FA5" font-family="system-ui,sans-serif">Source</text>
+<text x="10" y="198" font-size="12" font-weight="500" fill="#3C3489" font-family="system-ui,sans-serif">Resolver</text>
+<text x="10" y="214" font-size="12" font-weight="500" fill="#3C3489" font-family="system-ui,sans-serif">Workers</text>
+<text x="10" y="328" font-size="12" font-weight="500" fill="#633806" font-family="system-ui,sans-serif">Conversation</text>
+<text x="10" y="344" font-size="12" font-weight="500" fill="#633806" font-family="system-ui,sans-serif">Workers</text>
+<text x="10" y="476" font-size="12" font-weight="500" fill="#712B13" font-family="system-ui,sans-serif">Totals</text>
+<text x="10" y="492" font-size="12" font-weight="500" fill="#712B13" font-family="system-ui,sans-serif">Worker</text>
+
+<line x1="0"  y1="150" x2="1480" y2="150" stroke="#C0C0BB" stroke-width="0.5"/>
+<line x1="0"  y1="260" x2="1480" y2="260" stroke="#C0C0BB" stroke-width="0.5"/>
+<line x1="0"  y1="430" x2="1480" y2="430" stroke="#C0C0BB" stroke-width="0.5"/>
+<line x1="0"  y1="530" x2="1480" y2="530" stroke="#C0C0BB" stroke-width="0.5"/>
+<line x1="75" y1="30"  x2="75"   y2="540" stroke="#C0C0BB" stroke-width="0.5" stroke-dasharray="3 3"/>
+
+<!-- MONGO LANE -->
+<g class="c-blue">
+  <rect x="90" y="44" width="175" height="52" rx="6" stroke-width="0.5"/>
+  <text class="th" x="178" y="66" text-anchor="middle" dominant-baseline="central" font-size="12">Mongo change stream</text>
+  <text class="ts" x="178" y="82" text-anchor="middle" dominant-baseline="central">100 CDC events arrive</text>
+</g>
+<text font-size="10" x="268" y="64" fill="#185FA5" font-family="system-ui,sans-serif">ChangeEvents</text>
+<line x1="265" y1="70" x2="318" y2="70" stroke="#378ADD" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+
+<g class="c-blue">
+  <rect x="320" y="44" width="145" height="52" rx="6" stroke-width="0.5"/>
+  <text class="th" x="393" y="64" text-anchor="middle" dominant-baseline="central" font-size="12">Filter + extract</text>
+  <text class="ts" x="393" y="80" text-anchor="middle" dominant-baseline="central">document_ids</text>
+</g>
+<text font-size="10" x="466" y="64" fill="#185FA5" font-family="system-ui,sans-serif">document_id</text>
+<line x1="465" y1="70" x2="514" y2="70" stroke="#378ADD" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+
+<g class="c-teal">
+  <rect x="516" y="44" width="130" height="102" rx="6" stroke-width="0.5" stroke-dasharray="4 3"/>
+  <text class="th" x="581" y="70" text-anchor="middle" dominant-baseline="central" font-size="12">change_queue</text>
+  <text class="ts" x="581" y="86" text-anchor="middle" dominant-baseline="central">waiting line of</text>
+  <text class="ts" x="581" y="102" text-anchor="middle" dominant-baseline="central">document_ids</text>
+  <text class="ts" x="581" y="118" text-anchor="middle" dominant-baseline="central">100 ids queued</text>
+</g>
+
+<!-- RESOLVER LANE -->
+<text font-size="10" x="648" y="168" fill="#534AB7" font-family="system-ui,sans-serif">pulled by worker</text>
+<line x1="646" y1="130" x2="700" y2="175" stroke="#7F77DD" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+
+<g class="c-purple">
+  <rect x="702" y="160" width="175" height="70" rx="6" stroke-width="0.5"/>
+  <text class="th" x="790" y="182" text-anchor="middle" dominant-baseline="central" font-size="12">Collect _id batch</text>
+  <text class="ts" x="790" y="198" text-anchor="middle" dominant-baseline="central">100ms window</text>
+  <text class="ts" x="790" y="213" text-anchor="middle" dominant-baseline="central">{doc1…doc100}</text>
+</g>
+<line x1="877" y1="195" x2="926" y2="195" stroke="#7F77DD" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+
+<g class="c-purple">
+  <rect x="928" y="160" width="185" height="70" rx="6" stroke-width="0.5"/>
+  <text class="th" x="1021" y="180" text-anchor="middle" dominant-baseline="central" font-size="12">Projected _id→convId</text>
+  <text class="ts" x="1021" y="196" text-anchor="middle" dominant-baseline="central">lookup (projected)</text>
+  <text class="ts" x="1021" y="212" text-anchor="middle" dominant-baseline="central">doc1→c1, …, doc100→c100</text>
+</g>
+<line x1="1113" y1="195" x2="1162" y2="195" stroke="#7F77DD" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+
+<g class="c-teal">
+  <rect x="1164" y="160" width="150" height="100" rx="6" stroke-width="0.5" stroke-dasharray="4 3"/>
+  <text class="th" x="1239" y="184" text-anchor="middle" dominant-baseline="central" font-size="12">conversation_queue</text>
+  <text class="ts" x="1239" y="200" text-anchor="middle" dominant-baseline="central">waiting line of</text>
+  <text class="ts" x="1239" y="216" text-anchor="middle" dominant-baseline="central">conversationIds</text>
+  <text class="ts" x="1239" y="232" text-anchor="middle" dominant-baseline="central">{c1…c100}</text>
+</g>
+
+<!-- CONVERSATION LANE -->
+<path d="M1239 260 L1239 290 L1100 290" stroke="#BA7517" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+<text font-size="10" x="1140" y="286" fill="#633806" font-family="system-ui,sans-serif">pulled by worker</text>
+
+<g class="c-purple">
+  <rect x="870" y="272" width="175" height="54" rx="6" stroke-width="0.5"/>
+  <text class="th" x="958" y="296" text-anchor="middle" dominant-baseline="central" font-size="12">Collect conv. batch</text>
+  <text class="ts" x="958" y="311" text-anchor="middle" dominant-baseline="central">100ms window → chunk</text>
+</g>
+<line x1="870" y1="299" x2="818" y2="299" stroke="#BA7517" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+
+<g class="c-amber">
+  <rect x="625" y="270" width="190" height="62" rx="6" stroke-width="0.5"/>
+  <text class="th" x="720" y="293" text-anchor="middle" dominant-baseline="central" font-size="12">Fetch projected docs</text>
+  <text class="ts" x="720" y="309" text-anchor="middle" dominant-baseline="central">+ read existing Redis state</text>
+  <text class="ts" x="720" y="324" text-anchor="middle" dominant-baseline="central">⑧a projected  ⑧b read</text>
+</g>
+<line x1="625" y1="301" x2="574" y2="368" stroke="#BA7517" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+
+<g class="c-purple">
+  <rect x="432" y="350" width="195" height="62" rx="6" stroke-width="1.5"/>
+  <text class="th" x="530" y="374" text-anchor="middle" dominant-baseline="central" font-size="12">Rebuild latest state ⑨</text>
+  <text class="ts" x="530" y="390" text-anchor="middle" dominant-baseline="central">main business logic</text>
+  <text class="ts" x="530" y="405" text-anchor="middle" dominant-baseline="central">100 payloads out</text>
+</g>
+<line x1="432" y1="381" x2="380" y2="381" stroke="#BA7517" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+
+<g class="c-amber">
+  <rect x="200" y="355" width="175" height="52" rx="6" stroke-width="0.5"/>
+  <text class="th" x="288" y="378" text-anchor="middle" dominant-baseline="central" font-size="12">Write latest-state ⑩</text>
+  <text class="ts" x="288" y="394" text-anchor="middle" dominant-baseline="central">to Redis (before totals)</text>
+</g>
+<line x1="288" y1="407" x2="288" y2="448" stroke="#BA7517" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+
+<g class="c-teal">
+  <rect x="200" y="434" width="175" height="54" rx="6" stroke-width="0.5" stroke-dasharray="4 3"/>
+  <text class="th" x="288" y="458" text-anchor="middle" dominant-baseline="central" font-size="12">totals_queue</text>
+  <text class="ts" x="288" y="474" text-anchor="middle" dominant-baseline="central">TotalsDeltaEvent queued ⑪</text>
+</g>
+<line x1="288" y1="488" x2="288" y2="524" stroke="#993C1D" stroke-width="1" fill="none" marker-end="url(#arr2)"/>
+
+<!-- TOTALS LANE -->
+<g class="c-coral">
+  <rect x="200" y="536" width="200" height="62" rx="6" stroke-width="0.5"/>
+  <text class="th" x="300" y="560" text-anchor="middle" dominant-baseline="central" font-size="12">Update total metrics ⑫</text>
+  <text class="ts" x="300" y="576" text-anchor="middle" dominant-baseline="central">bucket read → subtract prev</text>
+  <text class="ts" x="300" y="591" text-anchor="middle" dominant-baseline="central">→ add curr → write back</text>
+</g>
+
+<!-- explanation box -->
+<rect x="460" y="440" width="550" height="148" rx="8" fill="none" stroke="#C0C0BB" stroke-width="0.5"/>
+<text font-size="11" font-weight="500" x="476" y="460" fill="#1a1a18" font-family="system-ui,sans-serif">How to read this diagram</text>
+<text font-size="11" x="476" y="478" fill="#5F5E5A" font-family="system-ui,sans-serif">A queue is a waiting line of items.</text>
+<text font-size="11" x="476" y="494" fill="#5F5E5A" font-family="system-ui,sans-serif">A worker is a background process that pulls from that line.</text>
+<text font-size="11" x="476" y="510" fill="#5F5E5A" font-family="system-ui,sans-serif">A 100ms batch window means: first item arrives → worker waits</text>
+<text font-size="11" x="476" y="524" fill="#5F5E5A" font-family="system-ui,sans-serif">up to 100ms to collect nearby items → processes them together.</text>
+<text font-size="11" x="476" y="540" fill="#5F5E5A" font-family="system-ui,sans-serif">That wait is local to that worker — the rest of the system</text>
+<text font-size="11" x="476" y="556" fill="#5F5E5A" font-family="system-ui,sans-serif">keeps running. This walkthrough follows one batch.</text>
+<text font-size="11" x="476" y="572" fill="#5F5E5A" font-family="system-ui,sans-serif">Multiple workers may run in parallel in production.</text>
+
+</svg>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function switchTab(id, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+</script>
+</body>
+</html>
