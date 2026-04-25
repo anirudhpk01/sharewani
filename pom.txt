@@ -1,1 +1,78 @@
-Ok theres some serious issues, firstly , I ran a test data generation generating 140 calls per second, but in the total metrics bucket right, when i fetch through a total metrics fetch api, its showing only 10-20 increase in total count every second.. and apart from that all other metrics are also faulty, all conversations show just in the new state , so all conversaiton count shows in "new card" field (Refer to total metrics,py from earlier if needed), and im not seeing any other metrics, all other metrics apart from channel distribution and total voice /chat split and new card (the number equsl to total conversation) for this by the way..  im seeing timeline data too, but apart from that nothing, the in progress, the closed (the totals one) , the contained, the transfers all show zero.. and all calls are still in new state according to this total metrics cos total says some number say 624, even new card says that... u can refer to the realtime metrics and total metrics from originally sent earlier in chat ..the only confusing part if closed means different in realtime metrics and in total metrics slightly different,... but even apart from these semantics, why arent any metrics working, why is nothing working
+Basic fields (Direct pull):
+
+conversationid → Direct pull
+market → Direct pull
+region → Direct pull
+create_datetime → Direct pull
+conversation_type → Direct pull (VOICE/CHAT)
+Conversation Status
+
+conversation_closed_ind → conversationstatus --> CLOSED then 0 else 1
+Input Flags (Active State Checks)
+
+ivr_inp → check organizationName and status <> CLOSED/TRANSFERRED
+bot_inp → check organizationName and status <> CLOSED/TRANSFERRED
+genesys_inp → check organizationName and status <> CLOSED/TRANSFERRED
+Closed Flags
+
+ivr_clsd → check organizationName and status = CLOSED/TRANSFERRED
+bot_clsd → check organizationName and status = CLOSED/TRANSFERRED
+genesys_clsd → check organizationName and status = CLOSED/TRANSFERRED
+Handling Time Calculations
+
+conversation_handling_time → organizationName = VOL/CBOL 
+                             and diff between createdttm and modifiedddtm when conversation is closed
+
+ivr_handling_time → organizationName = IVR 
+                    and diff between createdttm and modifiedddtm
+                    (Pending item – IVR appears twice in same conversation)
+
+bot_handling_time → organizationName = BOT 
+                    and diff between createdttm and modifiedddtm
+
+genesys_handling_time → organizationName = GENESYS 
+                        and diff between createdttm and modifiedddtm
+Transfer Metrics
+
+voicebot_to_voiceagent_transfer → Based on channel from VOL
+
+bot_to_ivr_transfer → Based on channel from VOL/CBOL
+
+chatbot_to_chatagent_transfer → Based on channel from CBOL
+Conference
+
+genesys_conference_call → organizationName = GENESYS and status = CONFERENCE
+Conversation End Status
+
+conversation_ended_by_customer → VOL/CBOL status = ENDED_BY_CUSTOMER
+
+conversation_ended_by_system → VOL/CBOL status = ENDED_BY_SYSTEM
+Containment Flags
+
+ivr_contained → check organizationName and status = CLOSED
+
+bot_contained → check organizationName and status = CLOSED
+
+genesys_contained → check organizationName and status = CLOSED
+Intent & Sentiment
+
+intent → pick all intents for the conversation based on timestamp
+
+sentiment → pick latest sentiment for the conversation based on timestamp
+Queue State
+
+conversation_in_queue → if VOL/CBOL has transferred 
+                        but next channel has not sent "in_progress" entry
+Interaction Time
+
+interaction_handling_time → total interaction time of IVR, GENESYS, and BOT
+Extra Notes from Sheet
+
+Active calls → if any of ivr_inp / bot_inp / genesys_inp is 1
+
+Cards:
+- All
+- Closed
+- On queue
+- Ended by customer
+- Ended by system
