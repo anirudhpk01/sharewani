@@ -1,0 +1,97 @@
+"""
+Modification to app/service/realtime_metrics.py for one-time-load → doc-cache.
+
+WHAT TO CHANGE
+==============
+Add ONE helper at module level and modify _flush_one_time_load_batch (or
+wherever your one-time-load currently writes the aggregated payloads to
+Redis) to ALSO write the doc-cache for every conversation it processes.
+
+This makes CDC immediately ready to work from cache for every in-flight
+conversation, without any extra Mongo reads.
+
+Step-by-step:
+
+  1. Paste `_DOC_CACHE_FIELDS` and `_build_doc_cache_entries_for_batch` at
+     the top of realtime_metrics.py (or in a private helper section).
+
+  2. Find your existing _flush_one_time_load_batch (or the function that
+     writes the batch of one-time-load aggregated payloads to Redis).
+     Right after it calls write_interactions_batch / similar, add:
+
+        # NEW: populate doc-cache so CDC has it ready
+        try:
+            doc_cache_entries = _build_doc_cache_entries_for_batch(convo_batch)
+            if doc_cache_entries:
+                await self.redis_client.set_docs_in_cache_batch(
+                    doc_cache_entries, key_prefix=self.redis_key_prefix,
+                )
+        except Exception as exc:
+            if self.logger:
+                try:
+                    await self.logger.warning(
+                        f"Failed to populate doc-cache during one-time load: {exc}"
+                    )
+                except Exception:
+                    pass
+
+  That's it. No business logic changes.
+"""
+
+from datetime import datetime, timezone
+from typing import Any, Dict, List
+
+
+# Field set must match _CDC_CACHED_FIELDS in connectionpool.py.
+_DOC_CACHE_FIELDS = (
+    "_id",
+    "conversationId",
+    "market",
+    "region",
+    "conversationType",
+    "conversationStatus",
+    "interactionStatus",
+    "createdDateTime",
+    "lastModifiedDateTime",
+    "timeStamp",
+    "organization",
+    "channel",
+    "details",
+    "intent",
+    "sentiment",
+)
+
+
+def _build_doc_cache_entries_for_batch(
+    convo_batch: List[tuple],
+) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """
+    Convert [(cid, [docs]), ...] → {cid: {doc_id_str: slim_doc}}.
+
+    `convo_batch` is the same shape as the existing one-time-load batches
+    (tuples of (conversation_id, list_of_docs)).
+    """
+    result: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for cid, docs in convo_batch:
+        if not cid or not docs:
+            continue
+        doc_map: Dict[str, Dict[str, Any]] = {}
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            doc_id = doc.get("_id") or doc.get("conversationId")
+            if not doc_id:
+                continue
+            doc_id_str = str(doc_id)
+            slim: Dict[str, Any] = {}
+            for field in _DOC_CACHE_FIELDS:
+                if field == "_id":
+                    slim["_id"] = doc_id_str
+                    continue
+                if field in doc and doc[field] is not None:
+                    slim[field] = doc[field]
+            slim["_lm"] = doc.get("lastModifiedDateTime") or datetime.now(timezone.utc).isoformat()
+            doc_map[doc_id_str] = slim
+        if doc_map:
+            result[cid] = doc_map
+    return result
