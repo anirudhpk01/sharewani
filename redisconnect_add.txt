@@ -1,9 +1,50 @@
+# ============================================================================
+# ADDITIONS TO app/core/redis_connect.py
+# ============================================================================
+#
+# These are SIX methods to be pasted INTO the AWSRedis class body, alongside
+# the existing get_interactions_batch / write_interactions_batch / etc.
+#
+# DO NOT run this file directly. It is a snippet of class-body methods.
+# Paste the methods (everything inside the "PASTE THESE METHODS" block below)
+# into your existing AWSRedis class. They use only existing helpers:
+#   self._build_prefix, self._build_conversation_hash_key,
+#   self._seconds_until_next_midnight_utc, self._parse_redis_value, self._client
+#
+# REDIS LAYOUT
+# ============
+# doc-cache key:  {redis_key}:{prefix}:doccache:{conversationId}
+#                 Type: Hash. Field=str(_id). Value=JSON-encoded slim doc.
+#
+# aggregated payload key (UNCHANGED):
+#                 {redis_key}:{prefix}:{conversationId}
+#                 Type: String. JSON-encoded aggregated payload.
+#
+# Doc-cache lives in Redis (NOT in-process) so:
+#   - Memory pressure is on ElastiCache (~320MB worst case at 100k active
+#     conversations × 4 docs × ~800 bytes), not on the ECS task.
+#   - State survives ECS task restarts.
+#   - Multiple replicas (if you ever scale out) all see the same cache.
+#
+# ENV VAR USED
+# ============
+#   CDC_REDIS_PIPELINE_CHUNK   default 1000   Max cids per Redis pipeline.
+#                                              Keeps each round-trip bounded.
+# ============================================================================
+
+
+# ============================================================================
+# PASTE THESE METHODS INTO THE AWSRedis CLASS BODY
+# ============================================================================
+#
+# (The leading 4-space indent on each method is class-body indentation.
+#  When you paste into your class, keep the indentation as shown.)
 
     def _build_doc_cache_key(self, conversation_id: str, key_prefix=None) -> str:
         """Redis key for the per-document hash of one conversation."""
         prefix = self._build_prefix(key_prefix)
         return f"{prefix}doccache:{conversation_id}"
- 
+
     async def cdc_batch_read(
         self,
         conversation_ids,
@@ -14,36 +55,36 @@
         Single-pipeline read of:
           1) doc-cache hash for every cid (HGETALL)
           2) existing aggregated payload for every cid (MGET)
- 
+
         Returns:
           doc_caches: {cid: {doc_id_str: cached_doc, ...}, ...}
           existing:   {cid: aggregated_payload_or_None, ...}
         """
         if not conversation_ids:
             return {}, {}
- 
+
         prefix = self._build_prefix(key_prefix)
         try:
             cdc_chunk = max(1, int(os.getenv("CDC_REDIS_PIPELINE_CHUNK", "1000")))
         except Exception:
             cdc_chunk = 1000
- 
+
         doc_caches = {}
         existing = {}
- 
+
         for start in range(0, len(conversation_ids), cdc_chunk):
             chunk = conversation_ids[start:start + cdc_chunk]
- 
+
             pipe = self._client.pipeline(transaction=False)
             for cid in chunk:
                 pipe.hgetall(f"{prefix}doccache:{cid}")
             pipe.mget(*[prefix + cid for cid in chunk])
- 
+
             try:
                 results = await pipe.execute()
             except Exception:
                 results = await pipe.execute()  # one retry
- 
+
             # All but last result are HGETALLs.
             for cid, raw_hash in zip(chunk, results[:-1]):
                 if not raw_hash:
@@ -56,13 +97,13 @@
                     if isinstance(parsed, dict):
                         parsed_hash[field_str] = parsed
                 doc_caches[cid] = parsed_hash
- 
+
             mget_values = results[-1] or []
             for cid, value in zip(chunk, mget_values):
                 existing[cid] = self._parse_redis_value(value)
- 
+
         return doc_caches, existing
- 
+
     async def cdc_batch_write(
         self,
         *,
@@ -80,7 +121,7 @@
              (mirrors write_interactions_batch behaviour exactly)
           4) DEL the doc-cache hash for any conversation that has just closed
           5) EXPIRE the doc-cache hash for any conversation still in flight
- 
+
         Note on TTL: matches existing write_interactions_batch — uses
         midnight-UTC TTL by default. The doc-cache only contains in-flight
         conversations because closed ones are DEL'd immediately (point 4),
@@ -88,35 +129,35 @@
         """
         if not (doc_cache_upserts or aggregated_writes or closed_conversations):
             return
- 
+
         prefix = self._build_prefix(key_prefix)
         hash_key = self._build_conversation_hash_key(key_prefix)
         ttl = int(
             expire_seconds if expire_seconds is not None
             else self._seconds_until_next_midnight_utc()
         )
- 
+
         try:
             cdc_chunk = max(1, int(os.getenv("CDC_REDIS_PIPELINE_CHUNK", "1000")))
         except Exception:
             cdc_chunk = 1000
- 
+
         all_cids = (
             set(doc_cache_upserts.keys())
             | set(aggregated_writes.keys())
             | set(closed_conversations or set())
         )
         cid_list = list(all_cids)
- 
+
         for start in range(0, len(cid_list), cdc_chunk):
             chunk = cid_list[start:start + cdc_chunk]
             pipe = self._client.pipeline(transaction=False)
- 
+
             hash_mapping = {}
- 
+
             for cid in chunk:
                 doc_cache_key = f"{prefix}doccache:{cid}"
- 
+
                 if cid in (closed_conversations or set()):
                     # Conversation closed → no future events ever → drop the cache.
                     pipe.delete(doc_cache_key)
@@ -128,22 +169,22 @@
                         }
                         pipe.hset(doc_cache_key, mapping=encoded_fields)
                         pipe.expire(doc_cache_key, ttl)
- 
+
                 agg = aggregated_writes.get(cid)
                 if agg is not None:
                     encoded = orjson.dumps(agg)
                     pipe.set(prefix + cid, encoded, ex=ttl)
                     hash_mapping[cid] = encoded
- 
+
             if hash_mapping:
                 pipe.hset(hash_key, mapping=hash_mapping)
                 pipe.expire(hash_key, ttl)
- 
+
             try:
                 await pipe.execute()
             except Exception:
                 await pipe.execute()  # one retry
- 
+
     async def get_doc_cache(self, conversation_id, *, key_prefix=None):
         """Return all cached docs for one cid (admin / one-time-load helper)."""
         cache_key = self._build_doc_cache_key(conversation_id, key_prefix)
@@ -158,12 +199,12 @@
             if isinstance(parsed, dict):
                 out[field_str] = parsed
         return out
- 
+
     async def set_docs_in_cache_batch(self, updates, *, key_prefix=None, ttl=None):
         """
         Bulk-populate the doc-cache for many conversations.
         Used at startup by the one-time-load path; never on the CDC hot path.
- 
+
         updates shape: {cid: {doc_id_str: doc_dict, ...}, ...}
         """
         if not updates:
@@ -176,7 +217,7 @@
             cdc_chunk = max(1, int(os.getenv("CDC_REDIS_PIPELINE_CHUNK", "1000")))
         except Exception:
             cdc_chunk = 1000
- 
+
         cid_list = list(updates.keys())
         for start in range(0, len(cid_list), cdc_chunk):
             chunk = cid_list[start:start + cdc_chunk]
@@ -197,7 +238,7 @@
                 await pipe.execute()
             except Exception:
                 await pipe.execute()
- 
+
     async def delete_doc_cache(self, conversation_id, *, key_prefix=None):
         """Delete the entire doc-cache for a conversation (admin / cleanup)."""
         cache_key = self._build_doc_cache_key(conversation_id, key_prefix)
@@ -205,3 +246,12 @@
             await self._client.delete(cache_key)
         except Exception:
             await self._client.delete(cache_key)
+
+
+# ============================================================================
+# REQUIRED IMPORTS AT TOP OF redis_connect.py
+# ============================================================================
+# Make sure these are imported in your redis_connect.py (most likely already are):
+#   import os
+#   import orjson
+# That's it.
