@@ -1,0 +1,207 @@
+
+    def _build_doc_cache_key(self, conversation_id: str, key_prefix=None) -> str:
+        """Redis key for the per-document hash of one conversation."""
+        prefix = self._build_prefix(key_prefix)
+        return f"{prefix}doccache:{conversation_id}"
+ 
+    async def cdc_batch_read(
+        self,
+        conversation_ids,
+        *,
+        key_prefix=None,
+    ):
+        """
+        Single-pipeline read of:
+          1) doc-cache hash for every cid (HGETALL)
+          2) existing aggregated payload for every cid (MGET)
+ 
+        Returns:
+          doc_caches: {cid: {doc_id_str: cached_doc, ...}, ...}
+          existing:   {cid: aggregated_payload_or_None, ...}
+        """
+        if not conversation_ids:
+            return {}, {}
+ 
+        prefix = self._build_prefix(key_prefix)
+        try:
+            cdc_chunk = max(1, int(os.getenv("CDC_REDIS_PIPELINE_CHUNK", "1000")))
+        except Exception:
+            cdc_chunk = 1000
+ 
+        doc_caches = {}
+        existing = {}
+ 
+        for start in range(0, len(conversation_ids), cdc_chunk):
+            chunk = conversation_ids[start:start + cdc_chunk]
+ 
+            pipe = self._client.pipeline(transaction=False)
+            for cid in chunk:
+                pipe.hgetall(f"{prefix}doccache:{cid}")
+            pipe.mget(*[prefix + cid for cid in chunk])
+ 
+            try:
+                results = await pipe.execute()
+            except Exception:
+                results = await pipe.execute()  # one retry
+ 
+            # All but last result are HGETALLs.
+            for cid, raw_hash in zip(chunk, results[:-1]):
+                if not raw_hash:
+                    doc_caches[cid] = {}
+                    continue
+                parsed_hash = {}
+                for field, value in raw_hash.items():
+                    field_str = field.decode() if isinstance(field, (bytes, bytearray)) else field
+                    parsed = self._parse_redis_value(value)
+                    if isinstance(parsed, dict):
+                        parsed_hash[field_str] = parsed
+                doc_caches[cid] = parsed_hash
+ 
+            mget_values = results[-1] or []
+            for cid, value in zip(chunk, mget_values):
+                existing[cid] = self._parse_redis_value(value)
+ 
+        return doc_caches, existing
+ 
+    async def cdc_batch_write(
+        self,
+        *,
+        doc_cache_upserts,
+        aggregated_writes,
+        closed_conversations,
+        key_prefix=None,
+        expire_seconds=None,
+    ):
+        """
+        Single-pipeline write per chunk that does:
+          1) HSET each conversation's doc-cache hash with all new/updated docs
+          2) SET each conversation's aggregated payload (with TTL)
+          3) HSET into the read-optimized __meta__:conversations hash
+             (mirrors write_interactions_batch behaviour exactly)
+          4) DEL the doc-cache hash for any conversation that has just closed
+          5) EXPIRE the doc-cache hash for any conversation still in flight
+ 
+        Note on TTL: matches existing write_interactions_batch — uses
+        midnight-UTC TTL by default. The doc-cache only contains in-flight
+        conversations because closed ones are DEL'd immediately (point 4),
+        so this TTL is just a safety net.
+        """
+        if not (doc_cache_upserts or aggregated_writes or closed_conversations):
+            return
+ 
+        prefix = self._build_prefix(key_prefix)
+        hash_key = self._build_conversation_hash_key(key_prefix)
+        ttl = int(
+            expire_seconds if expire_seconds is not None
+            else self._seconds_until_next_midnight_utc()
+        )
+ 
+        try:
+            cdc_chunk = max(1, int(os.getenv("CDC_REDIS_PIPELINE_CHUNK", "1000")))
+        except Exception:
+            cdc_chunk = 1000
+ 
+        all_cids = (
+            set(doc_cache_upserts.keys())
+            | set(aggregated_writes.keys())
+            | set(closed_conversations or set())
+        )
+        cid_list = list(all_cids)
+ 
+        for start in range(0, len(cid_list), cdc_chunk):
+            chunk = cid_list[start:start + cdc_chunk]
+            pipe = self._client.pipeline(transaction=False)
+ 
+            hash_mapping = {}
+ 
+            for cid in chunk:
+                doc_cache_key = f"{prefix}doccache:{cid}"
+ 
+                if cid in (closed_conversations or set()):
+                    # Conversation closed → no future events ever → drop the cache.
+                    pipe.delete(doc_cache_key)
+                else:
+                    upserts = doc_cache_upserts.get(cid)
+                    if upserts:
+                        encoded_fields = {
+                            doc_id: orjson.dumps(doc) for doc_id, doc in upserts.items()
+                        }
+                        pipe.hset(doc_cache_key, mapping=encoded_fields)
+                        pipe.expire(doc_cache_key, ttl)
+ 
+                agg = aggregated_writes.get(cid)
+                if agg is not None:
+                    encoded = orjson.dumps(agg)
+                    pipe.set(prefix + cid, encoded, ex=ttl)
+                    hash_mapping[cid] = encoded
+ 
+            if hash_mapping:
+                pipe.hset(hash_key, mapping=hash_mapping)
+                pipe.expire(hash_key, ttl)
+ 
+            try:
+                await pipe.execute()
+            except Exception:
+                await pipe.execute()  # one retry
+ 
+    async def get_doc_cache(self, conversation_id, *, key_prefix=None):
+        """Return all cached docs for one cid (admin / one-time-load helper)."""
+        cache_key = self._build_doc_cache_key(conversation_id, key_prefix)
+        try:
+            raw = await self._client.hgetall(cache_key)
+        except Exception:
+            raw = await self._client.hgetall(cache_key)
+        out = {}
+        for field, value in (raw or {}).items():
+            field_str = field.decode() if isinstance(field, (bytes, bytearray)) else field
+            parsed = self._parse_redis_value(value)
+            if isinstance(parsed, dict):
+                out[field_str] = parsed
+        return out
+ 
+    async def set_docs_in_cache_batch(self, updates, *, key_prefix=None, ttl=None):
+        """
+        Bulk-populate the doc-cache for many conversations.
+        Used at startup by the one-time-load path; never on the CDC hot path.
+ 
+        updates shape: {cid: {doc_id_str: doc_dict, ...}, ...}
+        """
+        if not updates:
+            return
+        prefix = self._build_prefix(key_prefix)
+        effective_ttl = int(
+            ttl if ttl is not None else self._seconds_until_next_midnight_utc()
+        )
+        try:
+            cdc_chunk = max(1, int(os.getenv("CDC_REDIS_PIPELINE_CHUNK", "1000")))
+        except Exception:
+            cdc_chunk = 1000
+ 
+        cid_list = list(updates.keys())
+        for start in range(0, len(cid_list), cdc_chunk):
+            chunk = cid_list[start:start + cdc_chunk]
+            pipe = self._client.pipeline(transaction=False)
+            any_op = False
+            for cid in chunk:
+                doc_map = updates.get(cid) or {}
+                if not doc_map:
+                    continue
+                cache_key = f"{prefix}doccache:{cid}"
+                mapping = {doc_id: orjson.dumps(doc) for doc_id, doc in doc_map.items()}
+                pipe.hset(cache_key, mapping=mapping)
+                pipe.expire(cache_key, effective_ttl)
+                any_op = True
+            if not any_op:
+                continue
+            try:
+                await pipe.execute()
+            except Exception:
+                await pipe.execute()
+ 
+    async def delete_doc_cache(self, conversation_id, *, key_prefix=None):
+        """Delete the entire doc-cache for a conversation (admin / cleanup)."""
+        cache_key = self._build_doc_cache_key(conversation_id, key_prefix)
+        try:
+            await self._client.delete(cache_key)
+        except Exception:
+            await self._client.delete(cache_key)
