@@ -1,78 +1,19 @@
-Basic fields (Direct pull):
-
-conversationid → Direct pull
-market → Direct pull
-region → Direct pull
-create_datetime → Direct pull
-conversation_type → Direct pull (VOICE/CHAT)
-Conversation Status
-
-conversation_closed_ind → conversationstatus --> CLOSED then 0 else 1
-Input Flags (Active State Checks)
-
-ivr_inp → check organizationName and status <> CLOSED/TRANSFERRED
-bot_inp → check organizationName and status <> CLOSED/TRANSFERRED
-genesys_inp → check organizationName and status <> CLOSED/TRANSFERRED
-Closed Flags
-
-ivr_clsd → check organizationName and status = CLOSED/TRANSFERRED
-bot_clsd → check organizationName and status = CLOSED/TRANSFERRED
-genesys_clsd → check organizationName and status = CLOSED/TRANSFERRED
-Handling Time Calculations
-
-conversation_handling_time → organizationName = VOL/CBOL 
-                             and diff between createdttm and modifiedddtm when conversation is closed
-
-ivr_handling_time → organizationName = IVR 
-                    and diff between createdttm and modifiedddtm
-                    (Pending item – IVR appears twice in same conversation)
-
-bot_handling_time → organizationName = BOT 
-                    and diff between createdttm and modifiedddtm
-
-genesys_handling_time → organizationName = GENESYS 
-                        and diff between createdttm and modifiedddtm
-Transfer Metrics
-
-voicebot_to_voiceagent_transfer → Based on channel from VOL
-
-bot_to_ivr_transfer → Based on channel from VOL/CBOL
-
-chatbot_to_chatagent_transfer → Based on channel from CBOL
-Conference
-
-genesys_conference_call → organizationName = GENESYS and status = CONFERENCE
-Conversation End Status
-
-conversation_ended_by_customer → VOL/CBOL status = ENDED_BY_CUSTOMER
-
-conversation_ended_by_system → VOL/CBOL status = ENDED_BY_SYSTEM
-Containment Flags
-
-ivr_contained → check organizationName and status = CLOSED
-
-bot_contained → check organizationName and status = CLOSED
-
-genesys_contained → check organizationName and status = CLOSED
-Intent & Sentiment
-
-intent → pick all intents for the conversation based on timestamp
-
-sentiment → pick latest sentiment for the conversation based on timestamp
-Queue State
-
-conversation_in_queue → if VOL/CBOL has transferred 
-                        but next channel has not sent "in_progress" entry
-Interaction Time
-
-interaction_handling_time → total interaction time of IVR, GENESYS, and BOT
-Extra Notes from Sheet
-
-Active calls → if any of ivr_inp / bot_inp / genesys_inp is 1
-
-Cards:
-- All
-- Closed
-- On queue
-- Ended by customer
-- Ended by system
+Instead of:
+JavaScript
+db.collection.updateOne(
+  { _id: id },
+  { $set: { status: "closed" } }
+)
+Do:
+JavaScript
+db.collection.updateOne(
+  { _id: id },
+  { 
+    $set: { 
+      status: "closed",
+      conversationId: existing.conversationId,
+      market: existing.market,
+      createdDateTime: existing.createdDateTime
+    }
+  }
+)
