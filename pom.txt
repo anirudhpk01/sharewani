@@ -1,37 +1,73 @@
-## Context
-We have a performance bottleneck in our metrics pipeline. Current behavior:
-- Generator produces ~140 calls per 10 seconds
-- But total metric counters only increment by ~40–50 calls per 10–15 seconds
-- This means most calls are not being reflected in the right buckets
-- **Target throughput: 1400 calls/second.** If we're already lagging at 140/10s, we will not survive 10x.
+## Status update
 
-## Hypothesis
-The bottleneck is the "fetch previous state" step before writing metrics to Redis. I believe this fetch is **unnecessary** based on the rules in `rulesheet.txt`. We should eliminate it entirely and focus purely on efficient Redis writes.
+You completed the previous-state-fetch elimination (45 tests passing, classification doc added — good). However, the throughput problem is **not solved**, and the data below proves the bottleneck has moved, not disappeared.
 
-## Why I think previous-state fetch is unnecessary
-Re-read `rulesheet.txt` carefully. To my reading, **no metric in that file actually requires previous state**:
+## Hard evidence — read this carefully before doing anything
 
-- **Non-VOL documents:** metrics are just frequency mappings of the *latest* intent/sentiment. Latest value → bucket increment. No history needed.
-- **VOL documents:** we receive the *full document* every time, so all the state we need is in the payload itself. The logic reduces to:
-  - If the last entry in `conversationStatus` is `CLOSED` → apply the "closed" rule set.
-  - Otherwise → apply rules based on the latest entry, its index in the array, and the corresponding `interactionStatus` and `channel` entries.
+**Pure CDC ingestion test (CDC pipeline only, no app):**
+```
+[CDC ACTUAL INGEST] rate=113.97/sec lifetime=80.63/sec total=9565
+streams=[insert-replace-fast=1785, update-lookup=5053]
+lag_avg_ms=1176  lag_window_max_ms=4222  last_lag_ms=555  max_lag_ms=6275
+```
 
-If I'm wrong about any metric needing previous state, point to the exact rule in `rulesheet.txt` and quote it. Otherwise, proceed.
+**Full app running, generator at 140 calls/sec:**
+```
+[CDC INGEST] rate=3/sec
+[CDC INGEST] rate=4/sec
+[CDC INGEST] rate=7/sec
+```
 
-## What I need you to do
+That is a **~30x degradation** the moment the full app is in the loop. Total metric buckets reflect 10–20 new entries every 5–10 seconds — wildly off the input rate.
 
-1. **Re-read `rulesheet.txt` thoroughly.** For every metric defined, classify it as:
-   - (a) Total-bucket contribution (derivable from current event alone), or
-   - (b) Latest-state contribution (derivable from current event alone), or
-   - (c) Genuinely requires previous state (and if so, quote the rule).
-2. Confirm or refute my hypothesis with evidence from the file.
-3. **Refactor the pipeline to eliminate the previous-state fetch** on the hot path. Create new files/modules if it makes the design cleaner — don't just patch the existing code if a redesign is warranted.
-4. Optimize Redis writes for high throughput (pipelining, batching, appropriate data structures, minimizing round trips — whatever applies).
-5. Make sure both **total metric updates** and **latest state updates** are correctly derived from the incoming event without any read-before-write.
+**Important:** initial load (the pre-CDC startup phase) is working fine. **Do not touch initial load logic.** The regression is exclusively in the live CDC + total-bucket update path.
 
-## Constraints
-- This is non-negotiable: the pipeline must sustain 1400 calls/second.
-- No previous-state fetch on the hot path unless you can prove from `rulesheet.txt` that a specific metric requires it.
-- Show me your analysis of the rulesheet before/alongside the code changes so I can verify the reasoning.
+## First question I need answered before any code changes
 
-Start by re-reading `rulesheet.txt` and giving me the metric classification. Then proceed to the refactor.
+Are `[CDC ACTUAL INGEST]` and `[CDC INGEST]` measuring the same thing, or different stages of the pipeline? If different — what stage is each measuring, and where does the throughput cliff actually occur? Trace the event lifecycle stage by stage and tell me the per-stage throughput. **I will not accept a fix without this trace.**
+
+## Suspected remaining bottlenecks (your own caveat from last round)
+
+You wrote:
+> "total bucket JSON updates still load existing bucket documents inside `TotalMetricsManager` to preserve percentages/distributions/timelines."
+
+This is almost certainly part of the problem. At 1400 inserts/sec + 15–20k updates/sec, a read-modify-write per bucket per event is fatal. Other likely culprits to investigate:
+
+1. **Per-event bucket document reads** in `TotalMetricsManager` — even with pipelining, if every event triggers a GET → mutate → SET on a JSON blob, you're serialised on Redis round-trips.
+2. **Synchronous / blocking I/O** anywhere on the hot path (await chains that should be `asyncio.gather`'d, sync Redis client calls, JSON (de)serialisation of large bucket docs per event).
+3. **Lock contention** on shared bucket documents — concurrent updates serialising on a mutex.
+4. **Single-consumer processing** — is CDC being processed by one task/worker? With 15–20k updates/sec target, you need a fan-out architecture (parallel consumers, partitioned by key).
+5. **Backpressure / queue saturation** — if an internal queue between ingest and processing is bounded and the consumer is slow, ingest rate will tank to consumer rate. The 3–7/sec number smells exactly like this.
+6. **Logging / observability overhead** — per-event log statements at 15k/sec will themselves bottleneck.
+
+## Non-negotiable targets
+
+- Sustain **1400 new conversations/sec** ingestion
+- Sustain **15,000–20,000 updates/sec** processing
+- **End-to-end latency ≤ 10 seconds** from CDC event to total-bucket reflection
+- No regression in initial load (already working — leave it alone)
+
+## What I need you to do, in this order
+
+1. **Profile, don't guess.** Add stage-level timing/throughput instrumentation across the live CDC path: ingest → parse → rule-classify → latest-state write → bucket update → ack. Run the generator at 140/sec and report per-stage rates and queue depths. Identify the single slowest stage with numbers.
+2. **Show me the trace before refactoring.** Paste the per-stage throughput table.
+3. **Then refactor the bottleneck stage.** Likely candidates and what I want you to consider:
+   - Replace per-event read-modify-write on bucket JSONs with **delta-only writes** using Redis HINCRBY / ZINCRBY / Lua scripts that mutate buckets server-side without ever sending the JSON blob over the wire.
+   - If percentages/distributions need recomputation, do it **lazily on read** or on a **periodic flush** — not per event.
+   - Convert the consumer to a **partitioned worker pool** (hash by conversation key, N workers) so updates parallelise.
+   - Use **Redis pipelines / MULTI** to batch writes per micro-batch (e.g., 50–200 events) instead of per event.
+   - Replace any sync Redis or sync I/O with async equivalents; ensure no `await` in a tight loop is serialising independent work — use `asyncio.gather` / `TaskGroup`.
+   - Audit logging on the hot path — drop to sampled or aggregate logs.
+4. **Re-run the generator at 140/sec and then ramp to 1400/sec.** Report the same per-stage trace after the fix. I want to see the cliff gone.
+5. **Update tests** to assert no per-event bucket-document fetch on the hot path (mirror what you did for previous latest-state).
+
+## Format of your response
+
+- Section 1: Stage-by-stage throughput trace (table) — *before* any code changes.
+- Section 2: Diagnosis — the single biggest bottleneck and why, with code references.
+- Section 3: Refactor plan with file-level changes.
+- Section 4: Implementation.
+- Section 5: Post-fix throughput trace at 140/sec and 1400/sec.
+- Section 6: Any remaining bottleneck and next step.
+
+Do not skip section 1. I need the trace first. Guesswork is what got us here.
