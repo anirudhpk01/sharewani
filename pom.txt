@@ -1,1 +1,37 @@
-hii
+## Context
+We have a performance bottleneck in our metrics pipeline. Current behavior:
+- Generator produces ~140 calls per 10 seconds
+- But total metric counters only increment by ~40–50 calls per 10–15 seconds
+- This means most calls are not being reflected in the right buckets
+- **Target throughput: 1400 calls/second.** If we're already lagging at 140/10s, we will not survive 10x.
+
+## Hypothesis
+The bottleneck is the "fetch previous state" step before writing metrics to Redis. I believe this fetch is **unnecessary** based on the rules in `rulesheet.txt`. We should eliminate it entirely and focus purely on efficient Redis writes.
+
+## Why I think previous-state fetch is unnecessary
+Re-read `rulesheet.txt` carefully. To my reading, **no metric in that file actually requires previous state**:
+
+- **Non-VOL documents:** metrics are just frequency mappings of the *latest* intent/sentiment. Latest value → bucket increment. No history needed.
+- **VOL documents:** we receive the *full document* every time, so all the state we need is in the payload itself. The logic reduces to:
+  - If the last entry in `conversationStatus` is `CLOSED` → apply the "closed" rule set.
+  - Otherwise → apply rules based on the latest entry, its index in the array, and the corresponding `interactionStatus` and `channel` entries.
+
+If I'm wrong about any metric needing previous state, point to the exact rule in `rulesheet.txt` and quote it. Otherwise, proceed.
+
+## What I need you to do
+
+1. **Re-read `rulesheet.txt` thoroughly.** For every metric defined, classify it as:
+   - (a) Total-bucket contribution (derivable from current event alone), or
+   - (b) Latest-state contribution (derivable from current event alone), or
+   - (c) Genuinely requires previous state (and if so, quote the rule).
+2. Confirm or refute my hypothesis with evidence from the file.
+3. **Refactor the pipeline to eliminate the previous-state fetch** on the hot path. Create new files/modules if it makes the design cleaner — don't just patch the existing code if a redesign is warranted.
+4. Optimize Redis writes for high throughput (pipelining, batching, appropriate data structures, minimizing round trips — whatever applies).
+5. Make sure both **total metric updates** and **latest state updates** are correctly derived from the incoming event without any read-before-write.
+
+## Constraints
+- This is non-negotiable: the pipeline must sustain 1400 calls/second.
+- No previous-state fetch on the hot path unless you can prove from `rulesheet.txt` that a specific metric requires it.
+- Show me your analysis of the rulesheet before/alongside the code changes so I can verify the reasoning.
+
+Start by re-reading `rulesheet.txt` and giving me the metric classification. Then proceed to the refactor.
