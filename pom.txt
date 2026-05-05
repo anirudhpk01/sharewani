@@ -1,73 +1,59 @@
-## Status update
+## Stop. Read this before doing anything.
 
-You completed the previous-state-fetch elimination (45 tests passing, classification doc added — good). However, the throughput problem is **not solved**, and the data below proves the bottleneck has moved, not disappeared.
+In your last response, Section 6 ("Risks"), you wrote:
 
-## Hard evidence — read this carefully before doing anything
+> "bucket_update may still be slow because total buckets still use JSON read-modify-write in `TotalMetricsManager.apply_cdc_delta_batch(...)`"
 
-**Pure CDC ingestion test (CDC pipeline only, no app):**
-```
-[CDC ACTUAL INGEST] rate=113.97/sec lifetime=80.63/sec total=9565
-streams=[insert-replace-fast=1785, update-lookup=5053]
-lag_avg_ms=1176  lag_window_max_ms=4222  last_lag_ms=555  max_lag_ms=6275
-```
+**That is the bottleneck. Fix it. This turn.**
 
-**Full app running, generator at 140 calls/sec:**
-```
-[CDC INGEST] rate=3/sec
-[CDC INGEST] rate=4/sec
-[CDC INGEST] rate=7/sec
-```
+The instrumentation you added is fine, the bounded enqueue queue is fine, but neither addresses the actual problem you yourself diagnosed. I do not need more tracing infrastructure. I do not need more "expected throughput" qualifications. I do not need you to wait for me to run a trace before committing to a fix you already know is required. Diagnose-and-defer is not acceptable on this turn.
 
-That is a **~30x degradation** the moment the full app is in the loop. Total metric buckets reflect 10–20 new entries every 5–10 seconds — wildly off the input rate.
+## What is non-negotiable on this turn
 
-**Important:** initial load (the pre-CDC startup phase) is working fine. **Do not touch initial load logic.** The regression is exclusively in the live CDC + total-bucket update path.
+1. **Eliminate JSON read-modify-write from the bucket update hot path.** Every single per-event `GET bucket_doc → JSON.parse → mutate → JSON.stringify → SET bucket_doc` pattern in `TotalMetricsManager.apply_cdc_delta_batch` and anywhere downstream must go.
+2. **Targets unchanged:** 1400 inserts/sec, 15–20k updates/sec, ≤10s end-to-end latency to bucket reflection.
+3. **Initial load works fine — do not touch it.**
 
-## First question I need answered before any code changes
+## How to actually fix it (pick what fits the codebase, justify your choice)
 
-Are `[CDC ACTUAL INGEST]` and `[CDC INGEST]` measuring the same thing, or different stages of the pipeline? If different — what stage is each measuring, and where does the throughput cliff actually occur? Trace the event lifecycle stage by stage and tell me the per-stage throughput. **I will not accept a fix without this trace.**
+You have at least four legitimate options. Choose the one that matches the existing data model with the least disruption, and **state explicitly why you chose it**:
 
-## Suspected remaining bottlenecks (your own caveat from last round)
+**Option A — Decompose the bucket document into Redis-native structures (preferred if feasible).**
+Break each bucket JSON into a Redis Hash where every counter is its own field. Replace the entire read-modify-write with `HINCRBY`/`HINCRBYFLOAT` on specific fields. Distributions become hash fields per category. Timelines become sorted sets (`ZADD`/`ZINCRBY`). No JSON parsing on the write path, ever.
 
-You wrote:
-> "total bucket JSON updates still load existing bucket documents inside `TotalMetricsManager` to preserve percentages/distributions/timelines."
+**Option B — Server-side mutation via Lua.**
+If the JSON-blob schema must be preserved for downstream consumers, move the entire GET-mutate-SET into a single Lua script executed server-side. This collapses 3 round trips into 1 and removes Python-side JSON cost from the hot path. Still inferior to Option A but vastly better than the current state.
 
-This is almost certainly part of the problem. At 1400 inserts/sec + 15–20k updates/sec, a read-modify-write per bucket per event is fatal. Other likely culprits to investigate:
+**Option C — Append-only delta log + lazy materialization.**
+On the hot path, only `RPUSH`/`XADD` the delta to a per-bucket stream. A background materializer compacts deltas into the bucket document on a schedule or on read. Hot path becomes O(1) write, no read.
 
-1. **Per-event bucket document reads** in `TotalMetricsManager` — even with pipelining, if every event triggers a GET → mutate → SET on a JSON blob, you're serialised on Redis round-trips.
-2. **Synchronous / blocking I/O** anywhere on the hot path (await chains that should be `asyncio.gather`'d, sync Redis client calls, JSON (de)serialisation of large bucket docs per event).
-3. **Lock contention** on shared bucket documents — concurrent updates serialising on a mutex.
-4. **Single-consumer processing** — is CDC being processed by one task/worker? With 15–20k updates/sec target, you need a fan-out architecture (parallel consumers, partitioned by key).
-5. **Backpressure / queue saturation** — if an internal queue between ingest and processing is bounded and the consumer is slow, ingest rate will tank to consumer rate. The 3–7/sec number smells exactly like this.
-6. **Logging / observability overhead** — per-event log statements at 15k/sec will themselves bottleneck.
+**Option D — Worker pool partitioned by bucket key.**
+If contention/serialisation is part of the cost, partition buckets across N async workers by hash(bucket_key). Combine with whichever of A/B/C you pick.
 
-## Non-negotiable targets
+I expect Option A or a hybrid of A + D unless you can justify otherwise from the code.
 
-- Sustain **1400 new conversations/sec** ingestion
-- Sustain **15,000–20,000 updates/sec** processing
-- **End-to-end latency ≤ 10 seconds** from CDC event to total-bucket reflection
-- No regression in initial load (already working — leave it alone)
+## Other things that must be audited and fixed on this same turn
 
-## What I need you to do, in this order
+- **Percentages and distributions:** if these require a full recompute on every event, move that computation to **read-time** or to a **periodic flush** (e.g., every 1s). It does not belong on the per-event write path.
+- **Pipelining:** every Redis interaction on the hot path must be pipelined or part of a Lua script. No solo round-trips per event.
+- **Async correctness:** scan the hot path for `await`s in tight loops that should be `asyncio.gather` / `TaskGroup`. Independent work must run concurrently.
+- **Logging:** any per-event log on the hot path drops to sampled (1 in N) or aggregate-only.
+- **Read-before-write audit:** confirm in writing that *no* code on the live CDC path issues a Redis GET before a SET. If you find any besides `TotalMetricsManager`, fix those too.
 
-1. **Profile, don't guess.** Add stage-level timing/throughput instrumentation across the live CDC path: ingest → parse → rule-classify → latest-state write → bucket update → ack. Run the generator at 140/sec and report per-stage rates and queue depths. Identify the single slowest stage with numbers.
-2. **Show me the trace before refactoring.** Paste the per-stage throughput table.
-3. **Then refactor the bottleneck stage.** Likely candidates and what I want you to consider:
-   - Replace per-event read-modify-write on bucket JSONs with **delta-only writes** using Redis HINCRBY / ZINCRBY / Lua scripts that mutate buckets server-side without ever sending the JSON blob over the wire.
-   - If percentages/distributions need recomputation, do it **lazily on read** or on a **periodic flush** — not per event.
-   - Convert the consumer to a **partitioned worker pool** (hash by conversation key, N workers) so updates parallelise.
-   - Use **Redis pipelines / MULTI** to batch writes per micro-batch (e.g., 50–200 events) instead of per event.
-   - Replace any sync Redis or sync I/O with async equivalents; ensure no `await` in a tight loop is serialising independent work — use `asyncio.gather` / `TaskGroup`.
-   - Audit logging on the hot path — drop to sampled or aggregate logs.
-4. **Re-run the generator at 140/sec and then ramp to 1400/sec.** Report the same per-stage trace after the fix. I want to see the cliff gone.
-5. **Update tests** to assert no per-event bucket-document fetch on the hot path (mirror what you did for previous latest-state).
+## Format I want back
 
-## Format of your response
+1. **Diagnosis** — quote the exact lines/functions in `TotalMetricsManager.apply_cdc_delta_batch` that do the JSON read-modify-write. One paragraph max.
+2. **Chosen option** (A/B/C/D or hybrid) with one-paragraph justification tied to the existing schema.
+3. **Code changes** — file by file, complete diffs or full new file contents. New files welcome.
+4. **Migration note** — if the bucket schema in Redis changes, what does that mean for existing data and for downstream readers? Include a one-time migration script if needed.
+5. **Tests** — assertions that the hot path performs zero JSON parses of bucket documents and zero pre-write GETs of bucket keys. Mirror what you did for the previous-state-fetch elimination.
+6. **Sanity check** — run the existing test suite and report pass/fail.
 
-- Section 1: Stage-by-stage throughput trace (table) — *before* any code changes.
-- Section 2: Diagnosis — the single biggest bottleneck and why, with code references.
-- Section 3: Refactor plan with file-level changes.
-- Section 4: Implementation.
-- Section 5: Post-fix throughput trace at 140/sec and 1400/sec.
-- Section 6: Any remaining bottleneck and next step.
+## What I do not want
 
-Do not skip section 1. I need the trace first. Guesswork is what got us here.
+- More instrumentation as the primary deliverable.
+- "I cannot give numbers without running it" as a substitute for committing to the fix.
+- Hedged language. Either the change is in or it isn't.
+- Touching initial load.
+
+You already have the diagnosis. Execute.
