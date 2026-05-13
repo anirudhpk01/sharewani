@@ -1,59 +1,599 @@
-## Stop. Read this before doing anything.
+```
 
-In your last response, Section 6 ("Risks"), you wrote:
+/* VOL DOCUMENT */
+/* 1 */
+{
+    "_id" : "385815b8-40b1-4875-8766-2f2defd84a5c",
+    "conversationId" : "385815b8-40b1-4875-8766-2f2defd84a5c",
+    "conversationStatus" : [ 
+        {
+            "NEW" : "2026-04-30T09:01:02.754Z"
+        }, 
+        {
+            "INITIATED" : "2026-04-30T09:01:20.596Z"
+        }, 
+        {
+            "TRANSFERRED" : "2026-04-30T09:01:35.671Z"
+        }, 
+        {
+            "TRANSFERRED" : "2026-04-30T09:01:49.190Z"
+        }, 
+        {
+            "CLOSED" : "2026-04-30T09:02:01.041Z"
+        }
+    ],
+    "conversationType" : "VOICE",
+    "createdDateTime" : "2026-04-30T09:01:03.062",
+    "customerId" : "IvrHotline1",
+    "details" : [ 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:02.754Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:20.596Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:35.671Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:49.190Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:02:01.041Z"
+        }
+    ],
+    "eventContent" : [ 
+        {
+            "P-Asserted-Identity" : "\"Pratik GILDA\" <sip:609175511368@128.164.83.55>",
+            "Call-ID" : "007BA962-DA89-196E-B968-F0FAA180AA77-3770@128.161.250.8",
+            "Remote-Party-ID" : "\"Pratik GILDA\" <sip:609175511368@128.164.83.55>;party=calling;screen=yes;privacy=off",
+            "CSeq" : "1 INVITE",
+            "X-Genesys-CallUUID" : "01TM5VMQH4CMTEB8U3TA305AES0009CK",
+            "X-ISCC-CofId" : "location=EMEA HSBC Ingress;cofid=16801303",
+            "User-to-User" : "00FA0800238D416985C0BA;encoding=hex",
+            "dnis" : "604470904918",
+            "From" : "\"Pratik GILDA\" <sip:609175511368@128.475511368???",
+            "To" : "<sip:604470904918@10.135.28.41:5060;transport=tcp>",
+            "Session-ID" : "0000532b00105000a0009afe3ec755c9;remote=00000000000000000000000000000000",
+            "Contact" : "<sip:609175511368@128.164.92.158:5061;transport=tls>",
+            "timeStamp" : "2026-04-30T09:01:02.754Z"
+        }, 
+        {
+            "P-Asserted-Identity" : "\"Pratik GILDA\" <sip:609175511368@128.164.83.55>",
+            "UD_CCAAS_UUID" : "a4287e74-0345-11f1-9767-0acb70bfcea5",
+            "Call-ID" : "007BA962-DA89-196E-B968-F0FAA180AA77-3770@128.161.250.8",
+            "CSeq" : "1 INVITE",
+            "X-Genesys-CallUUID" : "01TM5VMQH4CMTEB8U3TA305AES0009CK",
+            "X-ISCC-CofId" : "location=EMEA HSBC Ingress;cofid=16801303",
+            "User-to-User" : "00FA0800238D416985C0BA;encoding=hex",
+            "From" : "\"Pratik GILDA\" <sip:609175511368@128.164.92.158>;tag=007BA96C-DA89-196E-B968-F0FAA180AA77-6338",
+            "Session-ID" : "0000532b00105000a0009afe3ec755c9;remote=00000000000000000000000000000000",
+            "Contact" : "<sip:609175511368@128.164.92.158:5061;transport=tls>",
+            "UD_HotlineType" : "AutoAttendant",
+            "Remote-Party-ID" : "\"Pratik GILDA\" <sip:609175511368@128.164.83.55>;party=calling;screen=yes;privacy=off",
+            "UD_DNIS" : "604470904918",
+            "UD_ANI" : "609175511368",
+            "dnis" : "604470904918",
+            "To" : "<sip:604470904918@10.135.28.41:5060;transport=tcp>",
+            "timeStamp" : "2026-04-30T09:01:20.596Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:35.671Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:49.190Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:02:01.041Z"
+        }
+    ],
+    "interactionStatus" : [ 
+        {
+            "INITIATED" : "2026-04-30T09:01:02.754Z"
+        }, 
+        {
+            "TRANSFERRED" : "2026-04-30T09:01:20.596Z"
+        }, 
+        {
+            "INITIATED" : "2026-04-30T09:01:35.671Z"
+        }, 
+        {
+            "INITIATED" : "2026-04-30T09:01:49.190Z"
+        }, 
+        {
+            "CLOSED" : "2026-04-30T09:02:01.041Z"
+        }
+    ],
+    "lastModifiedDateTime" : "2026-04-30T09:02:01.322",
+    "market" : "UK_FD",
+    "organization" : "VOL",
+    "organizationId" : "ORG-VOL-UK",
+    "originatorId" : "VOL-UK",
+    "partitionList" : [ 
+        {
+            "NEW" : "22"
+        }, 
+        {
+            "INITIATED" : "22"
+        }, 
+        {
+            "TRANSFERRED" : "22"
+        }, 
+        {
+            "TRANSFERRED" : "22"
+        }, 
+        {
+            "CLOSED" : "22"
+        }
+    ],
+    "region" : "EURP",
+    "timeStamp" : "2026-04-30T09:02:01.041",
+    "updationTimeList" : [ 
+        {
+            "NEW" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:01:02.754", 
+                "2026-04-30T09:01:03.062291940Z", 
+                "2026-04-30T09:01:03.062406266Z", 
+                "22"
+            ]
+        }, 
+        {
+            "INITIATED" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:01:20.596", 
+                "2026-04-30T09:01:20.642003492Z", 
+                "2026-04-30T09:01:20.642058967Z", 
+                "22"
+            ]
+        }, 
+        {
+            "TRANSFERRED" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:01:35.671", 
+                "2026-04-30T09:01:35.705827415Z", 
+                "2026-04-30T09:01:35.705891673Z", 
+                "22"
+            ]
+        }, 
+        {
+            "TRANSFERRED" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:01:49.190", 
+                "2026-04-30T09:01:49.267952575Z", 
+                "2026-04-30T09:01:49.268037930Z", 
+                "22"
+            ]
+        }, 
+        {
+            "CLOSED" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:02:01.041", 
+                "2026-04-30T09:02:01.322792640Z", 
+                "2026-04-30T09:02:01.322875394Z", 
+                "22"
+            ]
+        }
+    ],
+    "verificationFlag" : "1",
+    "channel" : [ 
+        {
+            "IVR" : "2026-04-30T09:01:20.596Z"
+        }, 
+        {
+            "VOICEAGENTCLOUD" : "2026-04-30T09:01:35.671Z"
+        }, 
+        {
+            "IVR" : "2026-04-30T09:01:49.190Z"
+        }, 
+        {
+            "VOL" : "2026-04-30T09:02:01.041Z"
+        }
+    ]
+}
 
-> "bucket_update may still be slow because total buckets still use JSON read-modify-write in `TotalMetricsManager.apply_cdc_delta_batch(...)`"
+/* NON VOL DOCUMENTS */
 
-**That is the bottleneck. Fix it. This turn.**
 
-The instrumentation you added is fine, the bounded enqueue queue is fine, but neither addresses the actual problem you yourself diagnosed. I do not need more tracing infrastructure. I do not need more "expected throughput" qualifications. I do not need you to wait for me to run a trace before committing to a fix you already know is required. Diagnose-and-defer is not acceptable on this turn.
+/* 2 */
+{
+    "_id" : "5ad209c6-1e61-4088-91cd-c5de5b4bf373",
+    "conversationId" : "385815b8-40b1-4875-8766-2f2defd84a5c",
+    "conversationStatus" : [ 
+        {
+            "ACTIVE" : "2026-04-30T09:01:20.621Z"
+        }, 
+        {
+            "IN_PROGRESS" : "2026-04-30T09:01:20.646Z"
+        }
+    ],
+    "conversationType" : "VOICE",
+    "createdDateTime" : "2026-04-30T09:01:20.902",
+    "customerId" : "IvrHotline1",
+    "details" : [ 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:20.621Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:20.646Z"
+        }
+    ],
+    "eventContent" : [ 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:20.621Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:20.646Z"
+        }
+    ],
+    "interactionStatus" : [ 
+        {
+            "CONNECTED" : "2026-04-30T09:01:20.621Z"
+        }, 
+        {
+            "IN_PROGRESS" : "2026-04-30T09:01:20.646Z"
+        }
+    ],
+    "lastModifiedDateTime" : "2026-04-30T09:01:20.912",
+    "market" : "UK_FD",
+    "organization" : "IVR",
+    "organizationId" : "ORG-IVR-UK",
+    "originatorId" : "IVR-UK",
+    "partitionList" : [ 
+        {
+            "ACTIVE" : "33"
+        }, 
+        {
+            "IN_PROGRESS" : "33"
+        }
+    ],
+    "region" : "EURP",
+    "timeStamp" : "2026-04-30T09:01:20.646",
+    "updationTimeList" : [ 
+        {
+            "ACTIVE" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:01:20.621", 
+                "2026-04-30T09:01:20.902675065Z", 
+                "2026-04-30T09:01:20.902792329Z", 
+                "33"
+            ]
+        }, 
+        {
+            "IN_PROGRESS" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:01:20.646", 
+                "2026-04-30T09:01:20.912532718Z", 
+                "2026-04-30T09:01:20.912639843Z", 
+                "33"
+            ]
+        }
+    ],
+    "verificationFlag" : "1",
+    "channel" : [ 
+        {
+            "IVR" : "2026-04-30T09:01:20.646Z"
+        }
+    ]
+}
 
-## What is non-negotiable on this turn
+/* 3 */
+{
+    "_id" : "8e679f95-4325-43fc-97e2-915cdd861017",
+    "conversationId" : "385815b8-40b1-4875-8766-2f2defd84a5c",
+    "conversationStatus" : [ 
+        {
+            "ACTIVE" : "2026-04-30T09:01:35.685Z"
+        }, 
+        {
+            "IN_PROGRESS" : "2026-04-30T09:01:35.712Z"
+        }
+    ],
+    "conversationType" : "VOICE",
+    "createdDateTime" : "2026-04-30T09:01:36.057",
+    "customerId" : "IvrHotline1",
+    "details" : [ 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:35.685Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:35.712Z"
+        }
+    ],
+    "eventContent" : [ 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:35.685Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:35.712Z"
+        }
+    ],
+    "interactionStatus" : [ 
+        {
+            "CONNECTED" : "2026-04-30T09:01:35.685Z"
+        }, 
+        {
+            "IN_PROGRESS" : "2026-04-30T09:01:35.712Z"
+        }
+    ],
+    "lastModifiedDateTime" : "2026-04-30T09:01:36.067",
+    "market" : "UK_FD",
+    "organization" : "VOL_GENESYS",
+    "organizationId" : "ORG-IVR-UK",
+    "originatorId" : "IVR-UK",
+    "partitionList" : [ 
+        {
+            "ACTIVE" : "43"
+        }, 
+        {
+            "IN_PROGRESS" : "43"
+        }
+    ],
+    "region" : "EURP",
+    "timeStamp" : "2026-04-30T09:01:35.712",
+    "updationTimeList" : [ 
+        {
+            "ACTIVE" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:01:35.685", 
+                "2026-04-30T09:01:36.057332665Z", 
+                "2026-04-30T09:01:36.057451575Z", 
+                "43"
+            ]
+        }, 
+        {
+            "IN_PROGRESS" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:01:35.712", 
+                "2026-04-30T09:01:36.067078563Z", 
+                "2026-04-30T09:01:36.067177477Z", 
+                "43"
+            ]
+        }
+    ],
+    "verificationFlag" : "1",
+    "channel" : [ 
+        {
+            "VOICEAGENTCLOUD" : "2026-04-30T09:01:35.712Z"
+        }
+    ]
+}
 
-1. **Eliminate JSON read-modify-write from the bucket update hot path.** Every single per-event `GET bucket_doc → JSON.parse → mutate → JSON.stringify → SET bucket_doc` pattern in `TotalMetricsManager.apply_cdc_delta_batch` and anywhere downstream must go.
-2. **Targets unchanged:** 1400 inserts/sec, 15–20k updates/sec, ≤10s end-to-end latency to bucket reflection.
-3. **Initial load works fine — do not touch it.**
+/* 4 */
+{
+    "_id" : "3a5b79e5-219d-44d8-a00b-45c7d0eca634",
+    "conversationId" : "385815b8-40b1-4875-8766-2f2defd84a5c",
+    "conversationStatus" : [ 
+        {
+            "ACTIVE" : "2026-04-30T09:01:49.215Z"
+        }, 
+        {
+            "IN_PROGRESS" : "2026-04-30T09:01:49.240Z"
+        }, 
+        {
+            "CLOSED" : "2026-04-30T09:02:01.014Z"
+        }
+    ],
+    "conversationType" : "VOICE",
+    "createdDateTime" : "2026-04-30T09:01:49.725",
+    "customerId" : "IvrHotline1",
+    "details" : [ 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:49.215Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:49.240Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:02:01.014Z"
+        }
+    ],
+    "eventContent" : [ 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:49.215Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:01:49.240Z"
+        }, 
+        {
+            "additionalProp1" : "string",
+            "additionalProp2" : "string",
+            "additionalProp3" : "string",
+            "timeStamp" : "2026-04-30T09:02:01.014Z"
+        }
+    ],
+    "interactionStatus" : [ 
+        {
+            "CONNECTED" : "2026-04-30T09:01:49.215Z"
+        }, 
+        {
+            "IN_PROGRESS" : "2026-04-30T09:01:49.240Z"
+        }, 
+        {
+            "CLOSED" : "2026-04-30T09:02:01.014Z"
+        }
+    ],
+    "lastModifiedDateTime" : "2026-04-30T09:02:04.06255717",
+    "market" : "UK_FD",
+    "organization" : "IVR",
+    "organizationId" : "ORG-IVR-UK",
+    "originatorId" : "IVR-UK",
+    "partitionList" : [ 
+        {
+            "ACTIVE" : "39"
+        }, 
+        {
+            "IN_PROGRESS" : "39"
+        }, 
+        {
+            "CLOSED" : "39"
+        }
+    ],
+    "region" : "EURP",
+    "timeStamp" : "2026-04-30T09:02:04.049",
+    "updationTimeList" : [ 
+        {
+            "ACTIVE" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:01:49.215", 
+                "2026-04-30T09:01:49.725484781Z", 
+                "2026-04-30T09:01:49.725564981Z", 
+                "39"
+            ]
+        }, 
+        {
+            "IN_PROGRESS" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:01:49.240", 
+                "2026-04-30T09:01:49.736857921Z", 
+                "2026-04-30T09:01:49.736958943Z", 
+                "39"
+            ]
+        }, 
+        {
+            "CLOSED" : [ 
+                null, 
+                null, 
+                "2026-04-30T09:02:01.014", 
+                "2026-04-30T09:02:01.264145364Z", 
+                "2026-04-30T09:02:01.264240687Z", 
+                "39"
+            ]
+        }
+    ],
+    "verificationFlag" : "1",
+    "channel" : [ 
+        {
+            "IVR" : "2026-04-30T09:01:49.240Z"
+        }, 
+        {
+            "IVR" : "2026-04-30T09:02:01.014Z"
+        }
+    ],
+    "messages" : [ 
+        {
+            "speaker" : "customer",
+            "message" : "Could you help me with change address?",
+            "engineProvider" : "voxtral",
+            "dialect" : "en-us"
+        }, 
+        {
+            "speaker" : "customer",
+            "message" : "Hi, I'm calling because I need to request bank statement on my account.",
+            "engineProvider" : "voxtral",
+            "dialect" : "en-us"
+        }, 
+        {
+            "speaker" : "customer",
+            "message" : "Hi, I'm calling because I need to block block card on my card.",
+            "engineProvider" : "voxtral",
+            "dialect" : "en-us"
+        }, 
+        {
+            "speaker" : "agent",
+            "message" : "Everything is noted for balance enquiry, and there is nothing further needed right now.",
+            "engineProvider" : "voxtral",
+            "dialect" : "en-us"
+        }
+    ],
+    "sessionStartTimeMs" : NumberLong(1777539440734),
+    "status" : "SESSION_ENDED",
+    "summary" : [ 
+        {
+            "summaryId" : "3a5b79e5-219d-44d8-a00b-45c7d0eca634__2026-04-30T08:53:34.993Z",
+            "summary" : "Customer Query:\n- Request to change address\n- Request for a bank statement\n- Request to block a card\n\nResolution Provided:\n- No resolution provided\n\nFollow-up Actions:\n- No follow-up needed",
+            "timestamp" : "2026-04-30T09:02:02.228Z",
+            "_class" : "com.hsbc.wpb.ccaas.kafka.model.SummaryMessages"
+        }
+    ],
+    "intent" : [ 
+        {
+            "intentId" : "3a5b79e5-219d-44d8-a00b-45c7d0eca634__2026-04-30T08:57:43.734Z",
+            "intent" : "Customer_Correspondence address_Amend",
+            "timestamp" : "2026-04-30T08:57:43.734Z"
+        }, 
+        {
+            "intentId" : "3a5b79e5-219d-44d8-a00b-45c7d0eca634__2026-04-30T08:53:34.993Z",
+            "intent" : "Account_Block card_Request",
+            "timestamp" : "2026-04-30T08:53:34.993Z"
+        }
+    ]
+}
 
-## How to actually fix it (pick what fits the codebase, justify your choice)
 
-You have at least four legitimate options. Choose the one that matches the existing data model with the least disruption, and **state explicitly why you chose it**:
 
-**Option A — Decompose the bucket document into Redis-native structures (preferred if feasible).**
-Break each bucket JSON into a Redis Hash where every counter is its own field. Replace the entire read-modify-write with `HINCRBY`/`HINCRBYFLOAT` on specific fields. Distributions become hash fields per category. Timelines become sorted sets (`ZADD`/`ZINCRBY`). No JSON parsing on the write path, ever.
-
-**Option B — Server-side mutation via Lua.**
-If the JSON-blob schema must be preserved for downstream consumers, move the entire GET-mutate-SET into a single Lua script executed server-side. This collapses 3 round trips into 1 and removes Python-side JSON cost from the hot path. Still inferior to Option A but vastly better than the current state.
-
-**Option C — Append-only delta log + lazy materialization.**
-On the hot path, only `RPUSH`/`XADD` the delta to a per-bucket stream. A background materializer compacts deltas into the bucket document on a schedule or on read. Hot path becomes O(1) write, no read.
-
-**Option D — Worker pool partitioned by bucket key.**
-If contention/serialisation is part of the cost, partition buckets across N async workers by hash(bucket_key). Combine with whichever of A/B/C you pick.
-
-I expect Option A or a hybrid of A + D unless you can justify otherwise from the code.
-
-## Other things that must be audited and fixed on this same turn
-
-- **Percentages and distributions:** if these require a full recompute on every event, move that computation to **read-time** or to a **periodic flush** (e.g., every 1s). It does not belong on the per-event write path.
-- **Pipelining:** every Redis interaction on the hot path must be pipelined or part of a Lua script. No solo round-trips per event.
-- **Async correctness:** scan the hot path for `await`s in tight loops that should be `asyncio.gather` / `TaskGroup`. Independent work must run concurrently.
-- **Logging:** any per-event log on the hot path drops to sampled (1 in N) or aggregate-only.
-- **Read-before-write audit:** confirm in writing that *no* code on the live CDC path issues a Redis GET before a SET. If you find any besides `TotalMetricsManager`, fix those too.
-
-## Format I want back
-
-1. **Diagnosis** — quote the exact lines/functions in `TotalMetricsManager.apply_cdc_delta_batch` that do the JSON read-modify-write. One paragraph max.
-2. **Chosen option** (A/B/C/D or hybrid) with one-paragraph justification tied to the existing schema.
-3. **Code changes** — file by file, complete diffs or full new file contents. New files welcome.
-4. **Migration note** — if the bucket schema in Redis changes, what does that mean for existing data and for downstream readers? Include a one-time migration script if needed.
-5. **Tests** — assertions that the hot path performs zero JSON parses of bucket documents and zero pre-write GETs of bucket keys. Mirror what you did for the previous-state-fetch elimination.
-6. **Sanity check** — run the existing test suite and report pass/fail.
-
-## What I do not want
-
-- More instrumentation as the primary deliverable.
-- "I cannot give numbers without running it" as a substitute for committing to the fix.
-- Hedged language. Either the change is in or it isn't.
-- Touching initial load.
-
-You already have the diagnosis. Execute.
+```
